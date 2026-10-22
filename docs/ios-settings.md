@@ -217,7 +217,7 @@ table: update the entries of the replaced files in the original `.143` table (ke
 ## 7. Copying saves between devices
 
 Saves are in the app's `Documents/save`. Nothing syncs them: copy **one way**, from the device played last, and back up
-first.
+first. Automatic sync between iPhone, iPad and Mac is a proposal so far: [ios-save-sync.md](ios-save-sync.md).
 
 ```bash
 # list the files

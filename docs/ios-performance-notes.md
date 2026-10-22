@@ -1,7 +1,8 @@
 # iPhone performance notes (1.4.3)
 
 Measurements on an iPhone 15 Pro (iOS 27) and what they led to: the two **(testing)** options in the settings menu
-([ios-settings.md](ios-settings.md)) and thermal state in the log. Status as of 2026-10-22.
+([ios-settings.md](ios-settings.md)) and thermal state in the log. Status as of 2026-10-22. The raw logs of every run
+below are on branch [`ios-perf-logs`](https://github.com/kiluss2/MacNativeGames/tree/ios-perf-logs) (logs only).
 
 All numbers come from the game's own log, `Documents/log.txt` in the app container
 (`xcrun devicectl device copy from --device <UDID> --domain-type appDataContainer --domain-identifier <bundle id>
