@@ -167,7 +167,9 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
 - **GPU keep-alive (testing):** between frames the game keeps the GPU busy with filler work so it does not lower its
   clock (`TOTK_GPU_KEEPALIVE`, tuned on an M4 Mac). iPhone 15 Pro at a 30 FPS cap, left idle 22 minutes per run: with
   it on, the submit thread fell to 1.1 GHz; with it off, it stayed at 2.4 GHz, and the GPU ran slower but still kept
-  30 FPS. One run each so far and not yet measured in real play; if Off stutters more, turn it back On.
+  30 FPS. One run each so far and not yet measured in real play; if Off stutters more, turn it back On. The game's
+  log (`Documents/log.txt`) records the iOS thermal state (`thermal state` lines at start and on each change, `温控` in
+  the present summary every 300 frames: 0 nominal … 3 critical), so a hot phone can be told from a slow thread.
 
 Suggested: iPhone 720p / 100% / 60 FPS; iPad M4 1080p / 67% / 40–60 FPS, or 1080p / 100% / 30–40 FPS.
 

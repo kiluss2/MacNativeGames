@@ -87,6 +87,14 @@ void runtime_front_text_test(const char *op,const char *text){(void)text;fprintf
 @end
 static TOTKVsync *vsyncTarget;
 
+/* Thermal state for the graphics log ("温控" in the present summary, gfx/nvn/hle_nvn.c, whose weak default -1 stays on
+   the Mac): 0 nominal, 1 fair, 2 serious, 3 critical. With the CPU clock in the same log it tells a hot phone from a
+   thread iOS moved to the efficiency cores. Each change is logged too, with the seconds since the view was attached. */
+int dm_thermal_now(void){return (int)NSProcessInfo.processInfo.thermalState;}
+static void thermal_log(const char *why){
+ static const char *const names[]={"nominal","fair","serious","critical"};int t=dm_thermal_now();
+ fprintf(stderr,"[totk] thermal state %s: %s (%d) at %.1f s\n",why,t>=0&&t<4?names[t]:"?",t,(runtime_now_ns()-bootStartNS)/1e9);
+}
 /* Called on the main thread by the app before the game thread starts. */
 void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  bootStartNS=runtime_now_ns();
@@ -119,6 +127,8 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  NSNotificationCenter *nc=NSNotificationCenter.defaultCenter;
  [nc addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n){(void)n;app_active_changed(0);}];
  [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n){(void)n;app_active_changed(1);}];
+ thermal_log("at start");
+ [nc addObserverForName:NSProcessInfoThermalStateDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *n){(void)n;thermal_log("changed");}];
  vsyncTarget=[TOTKVsync new];displayLink=[CADisplayLink displayLinkWithTarget:vsyncTarget selector:@selector(tick:)];
  displayLink.preferredFrameRateRange=CAFrameRateRangeMake(60,60,60);[displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 }
