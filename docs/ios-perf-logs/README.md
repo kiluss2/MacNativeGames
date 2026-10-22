@@ -1,4 +1,4 @@
-# iPhone game logs (TotK 1.4.3)
+# iPhone and iPad game logs (TotK 1.4.3)
 
 Raw `Documents/log.txt` files behind [ios-performance-notes.md](../ios-performance-notes.md). This folder holds logs
 only; leave it out when proposing the code upstream.
@@ -21,6 +21,13 @@ mod loaded.
 | `6-check-thermal-logging.log` | Short check of the thermal logging build (`thermal state` lines, `温控 0`) | default |
 | `7-check-translation-thread-on.log` | Short check with Translation thread (testing) On: boots into the world at 30 FPS; the app went to the background at about 52 s, so it says nothing about long play | `TOTK_ASYNC_REPLAY=1` |
 | `8-play-19min-keepalive-off.log` | About 19 minutes of real play with the keep-alive off: notes section 2b (test plan step 1; clock holds at ~2.7 GHz, thermal fair at 7.2 min, serious at 10.2 min) | 30 FPS cap, performance overlay on, keep-alive off from the menu (`8-play-19min-keepalive-off-settings.txt`), translation thread off |
+| `9-play-5min-warm-start.log` | About 5 minutes of play started right after an 11-minute cable install (the phone already warm): notes section 2c (thermal fair at 49 s, clock ~1.7 GHz, long frames on the game's own CPU work) | as 8 (`9-play-5min-warm-start-settings.txt`); build with save sync, sync not yet chosen |
+
+## 2026-10-22, iPad Pro 11" (M4, iPadOS 27), bundle `com.kiluss.totk`
+
+| File | Run | Settings |
+|---|---|---|
+| `1-play-6min-keepalive-off.log` | About 6.5 minutes of play: notes section 2d (the game's controller holds 30 FPS while the idle GPU clocks down); also the first save sync on a device (a conflict resolved to the iPhone's save, then an upload) | default 60 FPS cap, keep-alive off from the menu (`1-play-6min-keepalive-off-settings.txt`), 720p, save sync on |
 
 The lines to read are listed in the notes (`翻译细项`, `计时`, `上屏`, `[长帧]`, `游戏设出图间隔`, `thermal state`).
 For example, the average clock per 300 frames:

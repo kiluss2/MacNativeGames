@@ -88,6 +88,44 @@ translation thread off. From minute 3 on, against session 1 (keep-alive on):
   power while the faster CPU spends more, so the net is probably cooler or the same.
 - Decision: keep-alive **off by default on the iPhone**; the iPad keeps it on until measured.
 
+## 2c. A warm start on the iPhone
+
+About 5 minutes of play right after an 11-minute install over a USB 2 cable (the phone charging and warm), same
+settings as 2b (`9-play-5min-warm-start.log`). From minute 1 on, against 2b:
+
+| | 2b | 2c |
+|---|---|---|
+| Thermal fair | at 7.2 min | **at 49 s** |
+| Average clock (replay thread), median | 2.72 GHz | **1.71 GHz** (43% of windows under 1.7) |
+| Frame time p50 / p95 | 33.5 / 38 ms | 34–49 / 68–72 ms |
+| Frames over budget per 1,000 | 15.5 | **75.2** |
+| Submit + present p50 / GPU p50 | 8 / 19 ms | 7–9 / 8–10 ms |
+| Over budget with compiles | 83 | 8 |
+
+The submit thread and the GPU kept up; the long frames are the game's own CPU work (frames of 50–80 ms with submit
+and GPU near 1 ms) at the lowered clock. Heat from the start, not the build: let the phone cool and play unplugged
+before comparing builds. One short run.
+
+## 2d. iPad: the game holds 30 FPS while the GPU idles
+
+iPad Pro M4, default 60 FPS cap, keep-alive **off** from the menu (the iPad default is on), about 6.5 minutes
+(`docs/ios-perf-logs/2026-10-22-ipad-pro-m4/1-play-6min-keepalive-off.log`). The player reported that standing still
+for a while drops the game to 30 FPS.
+
+- The game's own frame-rate controller set the present interval 43 times (`游戏设出图间隔 1 → 2`). At 60 FPS the GPU
+  took 7–10 ms per frame; in the 30 FPS stretches (9–89 s, 156–222 s, and from 271 s to the end) **19–20 ms**.
+- The loop: the controller drops to the 30 FPS interval when a frame's GPU time passes the 60 FPS budget. At 30 FPS the
+  GPU idles half the time, iOS lowers its clock, the same work then takes ~20 ms, still over 16.7 ms, so the controller
+  stays at 30. A lighter view (sky, indoors, menus) breaks it; standing in a steady scene does not.
+- The keep-alive exists for exactly this: it keeps the GPU from clocking down. On the iPhone with a 30 FPS cap the loop
+  cannot happen, which is why off is right there and on stays the iPad's default.
+- A fix without the filler work: in the uncapped mode (the iPad's, since the uncapped clock goes to 240) present at our
+  own pacing and ignore the game's 30 FPS interval (`TOTK_UNCAPPED_INTERVAL=1`, upstream's opt-in, gfx/nvn/nvn_obj.h);
+  the real-time frame step keeps game speed. Not yet tried: a heavy scene would then stutter instead of holding 30.
+
+The same log has the first save sync on a device: a conflict with the iPhone's upload, resolved to the iPhone's save,
+then an upload after the next save.
+
 ## 3. What changed (branch `ios-settings-menu`)
 
 - **GPU keep-alive (testing)**, menu, default Off on the iPhone and On on the iPad (since 2b); the other choice sets
