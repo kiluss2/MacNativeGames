@@ -18,12 +18,50 @@
 #include "controller_map.h"
 #include "include/totk_ui_lang.h"
 #include "totk_shader_contrib.h"   // the shared shader list contribution and its reminder
+#include "save_sync.h"            // runtime/save_sync.m: the save shared with the iPhone and iPad
 
 static void show_error(NSString *detail) {
     NSAlert *alert = [NSAlert new];
     alert.messageText = @"The game could not start";
     alert.informativeText = detail;
     [alert runModal];
+}
+
+/* Save sync (docs/ios-save-sync.md): TOTK_SAVE_SYNC_DIR names the folder ("0" turns it off); otherwise
+   iCloud Drive › TOTK Saves when that folder exists. Before the game starts, the newest save there is loaded (20 s at
+   most: a slow iCloud leaves the local save and cancels the sync before it changes anything); the game then uploads
+   after each save (runtime/frontend.m). A conflict asks which save to play. Returns the folder, or nil. */
+static NSString *save_sync_before_start(NSString *profile) {
+    const char *e = getenv("TOTK_SAVE_SYNC_DIR");
+    if (e && !strcmp(e, "0")) return nil;
+    NSString *dir = e && *e ? @(e) : [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Mobile Documents/com~apple~CloudDocs/TOTK Saves"];
+    BOOL isDir = NO;
+    if (![NSFileManager.defaultManager fileExistsAtPath:dir isDirectory:&isDir] || !isDir) return nil;
+    NSString *device = NSHost.currentHost.localizedName ?: @"Mac";
+    __block int result = SAVE_SYNC_ERROR; __block save_sync_remote remote; static volatile int cancel;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        char msg[256]; result = save_sync_pull(profile.fileSystemRepresentation, dir.fileSystemRepresentation, device.UTF8String, 0, &remote, &cancel, msg, sizeof msg);
+        dispatch_semaphore_signal(done);
+    });
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC))) {
+        cancel = 1; dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC));
+        fprintf(stderr, "[save-sync] no answer from %s in 20 s: starting with the local save\n", dir.UTF8String);
+        return dir;
+    }
+    if (result == SAVE_SYNC_CONFLICT) {
+        NSAlert *alert = [NSAlert new];
+        alert.messageText = @"Two saves";
+        alert.informativeText = [NSString stringWithFormat:@"%s saved at %s, and the save on this Mac changed too since the last sync. "
+                                 "Which save do you want to play? The other one is kept as a backup.", remote.device, remote.written];
+        [alert addButtonWithTitle:[NSString stringWithFormat:@"%s's save", remote.device]];
+        [alert addButtonWithTitle:@"This Mac's save"];
+        char msg[256];
+        if ([alert runModal] == NSAlertFirstButtonReturn)
+            save_sync_pull(profile.fileSystemRepresentation, dir.fileSystemRepresentation, device.UTF8String, 1, NULL, NULL, msg, sizeof msg);
+        else save_sync_push(profile.fileSystemRepresentation, dir.fileSystemRepresentation, device.UTF8String, 1, msg, sizeof msg);
+    }
+    return dir;
 }
 
 static NSDictionary<NSString *, NSString *> *kv_read(NSString *path) {
@@ -285,6 +323,8 @@ int main(int argc, char **argv) {
             dup2(fileno(lf), STDERR_FILENO);
             fclose(lf);
         }
+        { NSString *sync = save_sync_before_start(profile);   // after the log is open, so its lines land in it
+          setenv("TOTK_SAVE_SYNC_DIR", sync ? sync.fileSystemRepresentation : "0", 1); }
         char *const arguments[] = {(char *)binary.fileSystemRepresentation, "rewritten/" TOTK_GAME_DIR, "boot", NULL};
         execv(arguments[0], arguments);
         fprintf(stderr, "[launcher] execv failed: %s\n", strerror(errno));

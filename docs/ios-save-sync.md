@@ -1,59 +1,77 @@
-# Syncing saves between iPhone, iPad and Mac (proposal)
+# Syncing saves between iPhone, iPad and Mac
 
-Status as of 2026-10-22: a proposal, nothing implemented. Today saves are copied by hand
-([ios-settings.md, section 7](ios-settings.md#7-copying-saves-between-devices)).
+Status as of 2026-10-22: implemented on branch `ios-settings-menu` (runtime/save_sync.m), scenario-tested on the Mac
+and the nearby-device pass tried with an iPhone 15 Pro; not yet tested end to end through iCloud on the devices.
+Copying by hand still works: [ios-settings.md, section 7](ios-settings.md#7-copying-saves-between-devices).
 
-## Where the saves are
+## Setting it up
 
-| Device | Profile folder | Saves |
+1. In the Files app (or Finder), make a folder in iCloud Drive: **iCloud Drive › TOTK Saves**.
+2. **Mac:** nothing to set. When that folder exists the game uses it (`TOTK_SAVE_SYNC_DIR=<folder>` picks another,
+   `TOTK_SAVE_SYNC_DIR=0` turns it off).
+3. **iPhone / iPad:** settings menu (⚙︎) › **Save sync** › **Choose a folder in iCloud Drive…**, pick TOTK Saves, then
+   restart the game.
+4. **A device on another Apple ID:** on a device that owns the folder, Files › TOTK Saves › Share › **Collaborate**,
+   *Can make changes*, invite that Apple ID. On the other device, accept, then pick the folder from **Shared** in step 3.
+   Its storage counts against the owner's iCloud.
+
+The first device that starts with the folder empty uploads its save; every other device then loads it.
+
+## When it syncs
+
+Nothing runs while the game is closed: no agent, no timer.
+
+| When | iPhone / iPad | Mac |
 |---|---|---|
-| Mac | `~/Library/Application Support/MacNativeGames/TOTK/profile` | `save/<uid>/` in it |
-| iPhone, iPad | the app's `Documents/save` (also in Files › On My iPhone › the app, since the app shares its Documents) | `save/<uid>/` in it |
+| The game starts | before the game thread starts (`syncThenStart`, ios/Sources/main.m), with "Syncing the save…" | in the launcher before `execv` (app/launcher.m) |
+| A save is committed | a thread wakes on `commit()` (runtime/fs_host.c → `save_sync_note_commit`), waits until `runtime_fs_save_busy()` is false and uploads | the same, in the game |
+| Quit / background | `sceneDidEnterBackground` uploads inside a background task | the window close waits for the save, then uploads |
+| Nearby devices | — | once per game start, in the background: every iPhone or iPad on the cable or the same network with the game installed and not running is synced through `devicectl` (needs Xcode; `TOTK_SAVE_SYNC_NEARBY=0` turns it off) |
 
-- `<uid>` comes from `account.uid` in the profile folder (runtime/account.c), random on each device unless copied. A
-  sync should copy the contents of `save/<uid>/` (the `slot_*` folders, `option.sav`, `album`, `storage`) into the
-  local `<uid>` folder, so the ids need not match.
-- Every device must run the same game version (1.4.3 now). An older version may not read a newer save.
-- The game writes through runtime/fs_host.c: writes mark the save dirty, `commit()` syncs the files to disk and clears
-  it, and `runtime_fs_save_busy()` stays true while a write is open and for 3 s after. Copy out only when it is false.
+The download at start waits 20 s at most. If iCloud is slower, the game starts with the local save and the download is
+cancelled before it changes anything; the next save then uploads (or is kept as a conflict, below).
 
-## Options
+## What is in the folder
 
-| | Works away from the Mac | Changes | Limits |
-|---|---|---|---|
-| **A. Mac agent** | No | A Mac script only; no app rebuild | Only while the devices are on the Mac's Wi‑Fi or cable and the Mac is awake |
-| **B. Folder in iCloud Drive, synced by the app** | Yes, with internet | The iOS app and the Mac app; rebuild and reinstall | iCloud may lag by minutes; files not downloaded yet must be waited for |
-| C. iCloud container (CloudKit or ubiquity) | Yes | The signing team must add iCloud to the App ID and remake the profile; the Mac app signed by the same team | Ties the feature to one team; a free Personal Team cannot use it |
-| Manual, Files app | Yes | None | By hand; close the game first |
+| | |
+|---|---|
+| `manifest.json` | folder id, device, time, game version, a counter every upload raises, the save's digest and each file's size and SHA-256 |
+| `current/` | the files of `save/<uid>/`: `slot_*`, `option.sav`, `album`, `storage` |
+| `account.uid` | the first uploader's account id, taken by a device that has none yet |
+| `backups/` | the last 5 replaced uploads |
+| `conflicts/` | uploads that would have overwritten another device's newer save |
 
-Rules for A and B: the newest save wins, the save it replaces is backed up first, and a change on both sides since the
-last sync is never overwritten. Playing on two devices at the same time loses one side's progress.
+Each profile keeps `save-sync.json` (the folder id, counter and digest of its last sync) and `save-sync-backups/` (the
+last 10 local saves a download replaced). `<uid>` differs per device; the files go into the local `<uid>` folder.
 
-## B (recommended)
+## Rules
 
-- **Choosing the folder:** a settings-menu entry opens `UIDocumentPickerViewController` for a folder, such as
-  iCloud Drive › TOTK Saves, and keeps a security-scoped bookmark. This needs no iCloud entitlement, so the current
-  profiles and a free Personal Team work. The Mac app is not sandboxed and reads the same folder directly
-  (`~/Library/Mobile Documents/com~apple~CloudDocs/TOTK Saves`), or `TOTK_SAVE_SYNC_DIR`.
-- **In the folder:** `current/` (the contents of `save/<uid>/`), `manifest.json` (device name, game version, time
-  written, a counter that each write raises, and each file's size and SHA-256), `backups/<time>-<device>/`.
-- **At start, before the save is mounted** (`init` in fs_host.c): read the manifest under `NSFileCoordinator`. If it
-  is newer than the last sync this device made and the version matches, copy the local save to
-  `<profile>/save-backups/<time>/`, then copy `current/` in. iCloud may hold placeholders not downloaded yet:
-  `startDownloadingUbiquitousItemAtURL:` and wait a few seconds with a message, or start with the local save and
-  say so.
-- **After a save:** once `runtime_fs_save_busy()` is false after a commit, copy the save to a temporary folder beside
-  `current/`, swap it in and write the manifest. Do the same when the app goes to the background (inside
-  `beginBackgroundTaskWithExpirationHandler:`).
-- **Both changed:** local changes after the last sync and a manifest counter that moved mean two devices played. Keep
-  both and ask at the next start, showing each side's device and time.
+- **Newest wins.** At start the folder's save is loaded when its counter is above this device's last sync and this
+  device's save has not changed since then. The local save is backed up first.
+- **Both changed** (two devices played since the last sync): nothing is overwritten. At start the game asks which save
+  to play, naming the other device and its time; the other one stays as a backup. An upload that finds a newer
+  upload from another device goes to `conflicts/` instead.
+- **Incomplete upload:** a file whose SHA-256 does not match the manifest (iCloud still bringing it) replaces nothing.
+- **Another game version** in the folder: not synced.
+- **Another folder:** the state is tied to the folder id, so moving to a new folder starts over cleanly.
+- Play on one device at a time. The nearby pass leaves a device with the game running alone.
 
-## A (Mac as the hub)
+## Notes from the research
 
-- A LaunchAgent every 10 minutes, installed the way `games/totk/ios/tools/shader_contrib_watch.py install` installs
-  its own.
-- `xcrun devicectl list devices` for the devices in reach; `device info processes` to skip a device with the game
-  running; `device info files` (`--domain-type appDataContainer --subdirectory Documents/save`) for modification
-  times; `device copy from` / `copy to` for the files.
-- A hub copy on the Mac (`~/Library/Application Support/MacNativeGames/TOTK/save-hub/`) keeps the newest save, so a
-  device that comes back later gets it; the Mac's own profile is one more member.
+- A folder picked with `UIDocumentPickerViewController` can be kept as a bookmark and opened at the next launch
+  ([Providing access to directories](https://developer.apple.com/documentation/uikit/providing-access-to-directories)).
+  `.withSecurityScope` is macOS only; on iOS the bookmark is a plain (minimal) one and the resolved URL is opened with
+  `startAccessingSecurityScopedResource`. A bookmark does not carry over to another device, so each device picks the
+  folder once.
+- A coordinated read (`NSFileCoordinator`) of a file iCloud has not downloaded yet downloads it; every read and write of
+  the folder goes through it, on the Mac too (Optimize Mac Storage can leave files as placeholders).
+- No iCloud entitlement is needed, so a free Personal Team works. An iCloud container (CloudKit or a ubiquity
+  container) would need it on the App ID for every signer and the Mac app signed by the same team.
+- Shortcuts automations (copy on app open / close) were not used: they run beside the game's own start, cannot make
+  iCloud finish first and can overwrite a save.
+
+## Testing
+
+`save_sync_pull` / `save_sync_push` are plain functions over two folders. A scenario test (first upload, a device with
+its own uid, a device without an account, conflicts both ways, forced choices, an incomplete upload, a cancelled
+download, another game version, moving to a new folder) passed 24 of 24 checks on the Mac.

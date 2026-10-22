@@ -59,6 +59,8 @@ int runtime_fs_save_busy(void) {
     if (atomic_load(&save_writers) > 0) return 1;
     return atomic_load(&save_dirty) && runtime_now_ns() - atomic_load(&save_changed_ns) < 3000000000ull;
 }
+/* runtime/save_sync.m uploads the save after a commit; probes built without it get this no-op. */
+__attribute__((weak)) void save_sync_note_commit(void) {}
 static void make_dir(const char *p) { if (mkdir(p, 0700) && errno != EEXIST) runtime_fail("create profile storage directory"); }
 static int remove_tree(const char *path) {
     DIR *d = opendir(path); if (!d) return errno == ENOENT ? 0 : -1;
@@ -185,6 +187,7 @@ static unsigned commit(const char *name) {
     if (!found) return R_PATH_NOT_FOUND;
     for (int i = 0; i < NFILES; i++) { pthread_mutex_lock(&lock); int fd = files[i].fd; pthread_mutex_unlock(&lock); if (fd > 0) fcntl(fd, F_FULLFSYNC); }
     if (save && !(getenv("TOTK_PROBE_NEGATIVE") && atoi(getenv("TOTK_PROBE_NEGATIVE")) == 23)) atomic_store(&save_dirty, 0);   /* 23: probe-save's negative control */
+    if (save) save_sync_note_commit();
     return 0;
 }
 

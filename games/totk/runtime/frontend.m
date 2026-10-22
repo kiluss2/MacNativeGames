@@ -7,6 +7,7 @@
 #include <math.h>
 #include "runtime.h"
 #include "game_version.h"
+#include "save_sync.h"
 #include "totk_ui_lang.h"
 #include "gamepad_layout.h"
 #include "../third_party/d2r_gfx/gfx/nvn/totk_mfx_mode.h"
@@ -288,15 +289,19 @@ static void front_sync_drawable(void){
 -(void)windowDidBecomeKey:(NSNotification *)n{(void)n;atomic_store(&focused,1);if(window.styleMask&NSWindowStyleMaskFullScreen)[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:YES];runtime_oe_push_message(15);front_mouse_update();fprintf(stderr,"[totk] window gained focus\n");}
 -(void)windowDidResignKey:(NSNotification *)n{(void)n;atomic_store(&focused,0);[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:NO];front_mouse_update();runtime_input_clear();runtime_oe_push_message(15);fprintf(stderr,"[totk] window lost focus\n");}
 /* The process ends with the window. Save writes go straight to the files (runtime/fs_host.c), so a close in the middle of a
-   save waits (up to 15 s, the window already gone) until the game has written and committed it (runtime_fs_save_busy). */
+   save waits (up to 15 s, the window already gone) until the game has written and committed it (runtime_fs_save_busy).
+   With save sync (TOTK_SAVE_SYNC_DIR, runtime/save_sync.h) the save is uploaded before the process ends. */
 -(void)windowWillClose:(NSNotification *)n{(void)n;
  [(TOTKInputView *)window.contentView setCursorAutoHideEnabled:NO];
  if(mouseHeld){mouseHeld=NO;CGAssociateMouseAndMouseCursorPosition(true);[NSCursor unhide];}
- if(!runtime_fs_save_busy()){fprintf(stderr,"[totk] window closed; graceful guest shutdown pending\n");_exit(0);}
- fprintf(stderr,"[totk] window closed while the game is saving: quitting when the save is done\n");
+ const char *sync=getenv("TOTK_SAVE_SYNC_DIR");int syncing=sync&&*sync&&strcmp(sync,"0");
+ if(!runtime_fs_save_busy()&&!syncing){fprintf(stderr,"[totk] window closed; graceful guest shutdown pending\n");_exit(0);}
+ if(runtime_fs_save_busy())fprintf(stderr,"[totk] window closed while the game is saving: quitting when the save is done\n");
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
   uint64_t t0=runtime_now_ns();while(runtime_fs_save_busy()&&runtime_now_ns()-t0<15000000000ull)usleep(20000);
-  fprintf(stderr,"[totk] save %s after %.2f s; quitting\n",runtime_fs_save_busy()?"still in progress (gave up)":"done",(runtime_now_ns()-t0)/1e9);_exit(0);});
+  fprintf(stderr,"[totk] save %s after %.2f s; quitting\n",runtime_fs_save_busy()?"still in progress (gave up)":"done",(runtime_now_ns()-t0)/1e9);
+  if(syncing)save_sync_flush(0);
+  _exit(0);});
 }
 -(void)windowDidResize:(NSNotification *)n{(void)n;front_sync_drawable();}
 -(void)windowDidEnterFullScreen:(NSNotification *)n{(void)n;[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:window.isKeyWindow];}
@@ -328,6 +333,12 @@ void runtime_front_run(void(*callback)(void)){
   [NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
   runtime_mouse_set_hook(front_mouse_update);
   runtime_gamepad_start();
+  /* Save sync: the launcher loaded the newest save before this process started; here it uploads after each save, and
+     syncs the iPhones and iPads in reach once (runtime/save_sync.h). */
+  {const char *dir=getenv("TOTK_SAVE_SYNC_DIR"),*profile=getenv("TOTK_PROFILE_DIR");
+   if(dir&&*dir&&strcmp(dir,"0")&&profile){NSString *name=NSHost.currentHost.localizedName?:@"Mac";
+    save_sync_watch(profile,dir,name.UTF8String);
+    const char *near=getenv("TOTK_SAVE_SYNC_NEARBY");if(!(near&&!strcmp(near,"0")))save_sync_nearby_start(dir);}}
   /* Default window: the docked output size, 1920x1080, scaled down (16:9 kept) when the screen's visible area is smaller. */
   /* TOTK_WINDOW_SIZE=<w>x<h> (test scripts only, e.g. the 2K output test; the desktop launcher never sets it): another starting size. */
   NSRect vis=NSScreen.mainScreen?NSScreen.mainScreen.visibleFrame:NSMakeRect(0,0,1920,1080+28);CGFloat ww=1920,wh=1080;

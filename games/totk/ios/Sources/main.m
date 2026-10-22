@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <AVFAudio/AVFAudio.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -9,6 +10,7 @@
 #include <math.h>
 #include "runtime.h"
 #include "dmsh_chain.h"
+#include "save_sync.h"
 #import "touch_pad.h"
 
 int totk_host_main(int argc, char **argv);
@@ -61,6 +63,28 @@ static void render_size(int out_h, int pct, int *w, int *h) {
     *h = (out_h * num / den + 1) & ~1; *w = (width_16_9(out_h) * num / den + 1) & ~1;
 }
 
+/* Save sync (runtime/save_sync.h, docs/ios-save-sync.md): a folder the player picks once, normally in iCloud Drive (shared
+   with another Apple ID for a device on another account), kept as a bookmark. Synced before the game thread starts,
+   after each committed save and when the app goes to the background; nothing runs while the game is closed. */
+static NSString *const kSaveSyncFolderKey = @"TOTKSaveSyncFolder";
+static NSURL *g_sync_url;   /* the resolved folder, accessed for the app's lifetime */
+static volatile int g_sync_cancel;
+static NSURL *sync_folder(void) {
+    if (g_sync_url) return g_sync_url;
+    NSData *b = [NSUserDefaults.standardUserDefaults dataForKey:kSaveSyncFolderKey]; if (!b) return nil;
+    BOOL stale = NO; NSError *e = nil;
+    NSURL *u = [NSURL URLByResolvingBookmarkData:b options:NSURLBookmarkResolutionWithoutUI relativeToURL:nil bookmarkDataIsStale:&stale error:&e];
+    if (!u || ![u startAccessingSecurityScopedResource]) { fprintf(stderr, "[save-sync] the chosen folder cannot be opened: %s\n", e.localizedDescription.UTF8String ?: "no access"); return nil; }
+    if (stale) { NSData *nb = [u bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
+                 if (nb) [NSUserDefaults.standardUserDefaults setObject:nb forKey:kSaveSyncFolderKey]; }
+    return g_sync_url = u;
+}
+static NSString *sync_device_name(void) {   /* iOS 16+ hides the device's own name: model and a short id of this install */
+    NSString *id4 = [UIDevice.currentDevice.identifierForVendor.UUIDString substringToIndex:4] ?: @"????";
+    return [NSString stringWithFormat:@"%@ %@", UIDevice.currentDevice.model, id4];
+}
+static NSString *profile_dir(void) { const char *p = getenv("TOTK_PROFILE_DIR"); return p ? @(p) : nil; }
+
 @interface TOTKMetalView : UIView @end
 @implementation TOTKMetalView
 + (Class)layerClass { return CAMetalLayer.class; }
@@ -80,7 +104,8 @@ static void render_size(int out_h, int pct, int *w, int *h) {
 }
 @end
 
-@interface TOTKGameController : UIViewController
+@interface TOTKGameController : UIViewController <UIDocumentPickerDelegate>
+@property(nonatomic,strong) UILabel *syncLabel;
 @property(nonatomic,strong) TOTKMetalView *gameView; @property(nonatomic,strong) TOTKGearButton *gear; @property(nonatomic) NSUInteger gearShown;
 @end
 @implementation TOTKGameController
@@ -152,7 +177,23 @@ static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, i
     for (NSNumber *p in @[@50, @67, @75, @100]) { int w, h; render_size(out, p.intValue, &w, &h); [scaleLabels addObject:[NSString stringWithFormat:@"%@%% (%dx%d)", p, w, h]]; }
     __weak TOTKGameController *weakSelf = self;
     void (^restart)(int) = ^(int v) { (void)v; [weakSelf askRestart]; };
+    NSURL *folder = sync_folder();
+    NSMutableArray<UIMenuElement *> *syncItems = [NSMutableArray arrayWithObject:
+        [UIAction actionWithTitle:folder ? @"Choose another folder…" : @"Choose a folder in iCloud Drive…" image:[UIImage systemImageNamed:@"folder"]
+                       identifier:nil handler:^(UIAction *a) { (void)a; [weakSelf chooseSyncFolder]; }]];
+    if (folder) [syncItems addObject:[UIAction actionWithTitle:@"Turn off" image:[UIImage systemImageNamed:@"xmark.circle"] identifier:nil
+                                                       handler:^(UIAction *a) { (void)a; [weakSelf turnOffSync]; }]];
+    [syncItems addObject:[UIAction actionWithTitle:@"About this setting" image:[UIImage systemImageNamed:@"info.circle"] identifier:nil handler:^(UIAction *a) {
+        (void)a; [weakSelf explain:@"Save sync" text:@"Keeps one save for this device, your other iPhone or iPad and the Mac in a folder they all reach: "
+            "pick the same folder in iCloud Drive on each (for example iCloud Drive › TOTK Saves; on the Mac the game uses that folder "
+            "when it exists). A device on another Apple ID uses the folder shared with it in the Files app (Share › Collaborate, can make "
+            "changes). The game loads the newest save when it starts and uploads after every save and when it goes to the background; "
+            "nothing runs while the game is closed. A replaced save is backed up first. If two devices both played since the last sync, the "
+            "game asks which save to keep. Play on one device at a time."]; }]];
+    UIMenu *syncMenu = [UIMenu menuWithTitle:@"Save sync" image:nil identifier:nil options:0 children:syncItems];
+    syncMenu.subtitle = folder ? [NSString stringWithFormat:@"On: %@", folder.lastPathComponent] : @"Off";
     return @[
+        syncMenu,
         choice_menu(@"Frame rate limit", fps ? [NSString stringWithFormat:@"%d FPS", fps] : @"Unlimited", kFpsCapKey, fps,
                     @[@30, @40, @60, @0], @[@"30 FPS", @"40 FPS", @"60 FPS", @"Unlimited"], ^(int v) { nvn_set_fps_cap(v); },
                     ^{ [weakSelf explain:@"Frame rate limit" text:@"The most frames the game draws each second. This iPad's screen shows up to 120, so without a "
@@ -198,6 +239,86 @@ static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, i
     [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:a animated:YES completion:nil];
 }
+- (void)chooseSyncFolder {
+    UIDocumentPickerViewController *p = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeFolder]];
+    p.delegate = self; p.allowsMultipleSelection = NO;
+    [self presentViewController:p animated:YES completion:nil];
+}
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    (void)controller; NSURL *u = urls.firstObject; if (!u) return;
+    BOOL ok = [u startAccessingSecurityScopedResource]; NSError *e = nil;
+    NSData *b = [u bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark includingResourceValuesForKeys:nil relativeToURL:nil error:&e];
+    if (ok) [u stopAccessingSecurityScopedResource];
+    if (!b) { [self explain:@"Save sync" text:[NSString stringWithFormat:@"This folder cannot be kept: %@", e.localizedDescription]]; return; }
+    [NSUserDefaults.standardUserDefaults setObject:b forKey:kSaveSyncFolderKey];
+    fprintf(stderr, "[save-sync] folder chosen: %s\n", u.path.UTF8String);
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Save sync on"
+        message:[NSString stringWithFormat:@"The save syncs with \"%@\" from the next start: the game then loads the newest save there, or uploads "
+                 "this one if the folder is empty. Save your game before quitting.", u.lastPathComponent] preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Later" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Quit now" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) { (void)x; save_sync_flush(10); exit(0); }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+- (void)turnOffSync {
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:kSaveSyncFolderKey];
+    [self explain:@"Save sync off" text:@"The save stays on this device only from the next start. Nothing in the folder is deleted."];
+}
+/* Before the game thread starts: load the folder's save if it is newer (20 s at most; then the game starts with the
+   local save and the sync is cancelled before it could change anything). A conflict asks which save to keep. */
+- (void)syncThenStart {
+    NSURL *folder = sync_folder(); NSString *profile = profile_dir();
+    if (!folder || !profile) { [self startHost]; return; }
+    UILabel *l = [UILabel new]; self.syncLabel = l;
+    l.text = @"Syncing the save…"; l.textColor = [UIColor colorWithWhite:1 alpha:.8]; l.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    l.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:l];
+    [NSLayoutConstraint activateConstraints:@[[l.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [l.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-24]]];
+    __block BOOL done = NO; NSString *dir = folder.path, *device = sync_device_name();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if (done) return; done = YES; g_sync_cancel = 1;
+        fprintf(stderr, "[save-sync] no answer from the folder in 20 s: starting with this device's save\n");
+        [self finishSync:@"Save sync timed out: playing this device's save" dir:dir device:device];
+    });
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        char msg[256]; save_sync_remote r;
+        int res = save_sync_pull(profile.fileSystemRepresentation, dir.fileSystemRepresentation, device.UTF8String, 0, &r, &g_sync_cancel, msg, sizeof msg);
+        NSString *text = @(msg);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (done) return; done = YES;
+            if (res == SAVE_SYNC_CONFLICT) [self askConflict:r dir:dir device:device]; else [self finishSync:text dir:dir device:device];
+        });
+    });
+}
+- (void)askConflict:(save_sync_remote)r dir:(NSString *)dir device:(NSString *)device {
+    NSString *profile = profile_dir();
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Two saves"
+        message:[NSString stringWithFormat:@"%s saved at %s, and this device's save changed too since the last sync. Which save do you "
+                 "want to play? The other one is kept as a backup.", r.device, r.written] preferredStyle:UIAlertControllerStyleAlert];
+    void (^run)(BOOL) = ^(BOOL theirs) {
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            char msg[256];
+            if (theirs) save_sync_pull(profile.fileSystemRepresentation, dir.fileSystemRepresentation, device.UTF8String, 1, NULL, NULL, msg, sizeof msg);
+            else save_sync_push(profile.fileSystemRepresentation, dir.fileSystemRepresentation, device.UTF8String, 1, msg, sizeof msg);
+            NSString *text = @(msg);
+            dispatch_async(dispatch_get_main_queue(), ^{ [self finishSync:text dir:dir device:device]; });
+        });
+    };
+    [a addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%s's save", r.device] style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { (void)x; run(YES); }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"This device's save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { (void)x; run(NO); }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+- (void)finishSync:(NSString *)text dir:(NSString *)dir device:(NSString *)device {
+    self.syncLabel.text = text;
+    UILabel *l = self.syncLabel;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [l removeFromSuperview]; });
+    save_sync_watch(profile_dir().fileSystemRepresentation, dir.fileSystemRepresentation, device.UTF8String);
+    [self startHost];
+}
+- (void)startHost {
+    pthread_attr_t attr; pthread_attr_init(&attr); pthread_attr_setstacksize(&attr, 64u << 20);
+    pthread_t thread; pthread_create(&thread, &attr, run_host, NULL);
+    pthread_detach(thread); pthread_attr_destroy(&attr);
+}
 - (void)askRestart {
     UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Restart to apply"
         message:@"Resolution, render scale and the testing options change when the game starts again. Save your game before quitting." preferredStyle:UIAlertControllerStyleAlert];
@@ -225,9 +346,7 @@ static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, i
     fprintf(stderr, "[totk-audio] audio session category=%s active=%d route=%s err=%s%s\n",
             audio.category.UTF8String ?: "?", (int)activated, audio.currentRoute.outputs.firstObject.portType.UTF8String ?: "?",
             catErr ? catErr.localizedDescription.UTF8String : "none", actErr ? actErr.localizedDescription.UTF8String : "");
-    pthread_attr_t attr; pthread_attr_init(&attr); pthread_attr_setstacksize(&attr, 64u << 20);
-    pthread_t thread; pthread_create(&thread, &attr, run_host, NULL);
-    pthread_detach(thread); pthread_attr_destroy(&attr);
+    [self syncThenStart];
 }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
 - (BOOL)prefersStatusBarHidden { return YES; }
@@ -243,6 +362,15 @@ static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, i
     if (![scene isKindOfClass:UIWindowScene.class]) return;
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     self.window.rootViewController = [TOTKGameController new]; [self.window makeKeyAndVisible];
+}
+/* Save sync: upload in the time iOS gives a backgrounded app (the game may never come back). */
+- (void)sceneDidEnterBackground:(UIScene *)scene {
+    (void)scene; UIApplication *app = UIApplication.sharedApplication;
+    __block UIBackgroundTaskIdentifier task = [app beginBackgroundTaskWithName:@"save sync" expirationHandler:^{ [app endBackgroundTask:task]; task = UIBackgroundTaskInvalid; }];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        save_sync_flush(10);
+        dispatch_async(dispatch_get_main_queue(), ^{ if (task != UIBackgroundTaskInvalid) { [app endBackgroundTask:task]; task = UIBackgroundTaskInvalid; } });
+    });
 }
 @end
 

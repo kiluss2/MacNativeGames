@@ -158,6 +158,7 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
 
 | Item | Choices | Takes effect |
 |---|---|---|
+| Save sync | **Off** / a folder in iCloud Drive ([ios-save-sync.md](ios-save-sync.md)) | next launch |
 | Frame rate limit | 30 / 40 / **60** / Unlimited | at once |
 | Resolution | **720p** (Switch handheld) / 900p / 1080p (Switch docked) | next launch |
 | Render scale | 50% / 67% / 75% / **100%** (with the actual size) | next launch |
@@ -219,7 +220,8 @@ table: update the entries of the replaced files in the original `.143` table (ke
 ## 7. Copying saves between devices
 
 Saves are in the app's `Documents/save`. Nothing syncs them: copy **one way**, from the device played last, and back up
-first. Automatic sync between iPhone, iPad and Mac is a proposal so far: [ios-save-sync.md](ios-save-sync.md).
+first. Automatic sync between iPhone, iPad and Mac through a folder in iCloud Drive: settings menu › Save sync, see
+[ios-save-sync.md](ios-save-sync.md).
 
 ```bash
 # list the files
