@@ -1,18 +1,22 @@
-# iPhone / iPad: build, sign, settings menu (branch `ios-settings-menu`)
+# iPhone / iPad: build, sign, settings menu
 
-Hướng dẫn build bản iPhone/iPad của Tears of the Kingdom 1.4.3 từ nhánh này, ký bằng Apple ID của bạn (kể cả tài khoản
-miễn phí), cài lên máy, dùng menu cài đặt, cài mod và chép save giữa các máy.
+How to build the iPhone/iPad version of Tears of the Kingdom 1.4.3, sign it with an Apple ID (a free account works
+too), install it, use the settings menu, add mods and copy saves between devices.
 
-Đã chạy được trên iPad Pro 11" (M4, iPadOS 27) và iPhone 15 Pro (iOS 27).
+Until it is merged upstream, this lives on the `ios-settings-menu` branch of
+[kiluss2/MacNativeGames](https://github.com/kiluss2/MacNativeGames/tree/ios-settings-menu).
 
-## 1. Chuẩn bị
+Tested on an iPad Pro 11" (M4, iPadOS 27) and an iPhone 15 Pro (iOS 27).
 
-- Mac Apple silicon, macOS 26 trở lên, **Xcode 26 trở lên** (đầy đủ, có iOS SDK và Metal toolchain).
-- Công cụ: `brew install opus libvpx python@3.14 xcodegen cmake ninja`
-- Metal toolchain (để biên dịch shader sẵn): `xcodebuild -downloadComponent MetalToolchain`
-- Game gốc 1.0.0 (`0100F2C0115B6000`, XCI hoặc NSP), bản update 1.4.3 (NSP/NSZ) và `prod.keys` của bạn.
-- Trống khoảng **60 GB** cho lần build iOS đầu tiên.
-- Apple ID đã đăng nhập trong **Xcode → Settings → Accounts** (miễn phí cũng được).
+## 1. Requirements
+
+- An Apple silicon Mac, macOS 26 or later, **Xcode 26 or later** (the full app, with the iOS SDK and the Metal
+  toolchain).
+- Tools: `brew install opus libvpx python@3.14 xcodegen cmake ninja`
+- The Metal toolchain (to compile shaders ahead of time): `xcodebuild -downloadComponent MetalToolchain`
+- The base game 1.0.0 (`0100F2C0115B6000`, XCI or NSP), the 1.4.3 update (NSP/NSZ) and your own `prod.keys`.
+- About **60 GB** free for the first iOS build.
+- An Apple ID signed in under **Xcode → Settings → Accounts** (a free account is enough).
 
 ## 2. Build
 
@@ -24,57 +28,59 @@ TOTK_IOS_OUTPUT_MAX=1920x1080 TOTK_RENDER_RES=1280x720 TOTK_IOS_BUNDLE_ID=com.yo
   --platform ios -o ~/Games/TOTK.ipa
 ```
 
-Ba biến môi trường là bắt buộc để menu hoạt động đủ:
+All three environment variables are needed for the whole menu to work:
 
-| Biến | Tác dụng |
+| Variable | Effect |
 |---|---|
-| `TOTK_IOS_OUTPUT_MAX=1920x1080` | Nhúng patch xuất hình vào code iOS, để chọn được Resolution 720p/900p/1080p. Tối đa 1920x1080: bộ nhớ heap của game vốn đủ cho mức này nên không cần sửa thêm dữ liệu. |
-| `TOTK_RENDER_RES=1280x720` | Nhúng patch độ phân giải cảnh 3D, để chỉnh được Render scale. Kích thước thật do iPhone/iPad chọn mỗi lần mở game. |
-| `TOTK_IOS_BUNDLE_ID=com.yourname.totk` | Bundle ID của app. Đặt một ID của riêng bạn: mỗi Bundle ID chỉ một team đăng ký được. |
+| `TOTK_IOS_OUTPUT_MAX=1920x1080` | Embeds the output patch in the iOS code, so Resolution can be set to 720p, 900p or 1080p. At most 1920x1080: the game's heaps are already sized for it, so no game data needs changing. |
+| `TOTK_RENDER_RES=1280x720` | Embeds the 3D scene resolution patch, so Render scale works. The actual size is picked by the iPhone/iPad at each launch. |
+| `TOTK_IOS_BUNDLE_ID=com.yourname.totk` | The app's bundle ID. Use one of your own: a bundle ID can be registered by only one team. |
 
-Lần đầu mất vài tiếng (biên dịch shader và pipeline cho iOS). Các lần sau dùng lại thư mục `TOTK_build` (cạnh file game,
-hoặc nơi `--work` chỉ tới) nên chỉ mất khoảng 5 phút. App chưa ký nằm ở
-`TOTK_build/totk/build/ios-payload/Payload/TOTK.app` (và đóng gói thành `TOTK.ipa`).
+The first build takes a few hours (it compiles shaders and pipelines for iOS). Later builds reuse the `TOTK_build`
+folder (next to the game file, or where `--work` points), so they take about 5 minutes. The unsigned app is
+`TOTK_build/totk/build/ios-payload/Payload/TOTK.app` (also packed as `TOTK.ipa`).
 
-Muốn không cài agent nhắc gửi shader trên Mac thì thêm `--no-shader-reminder`.
+`--no-shader-reminder` skips installing the Mac agent that offers to send new shaders.
 
-## 3. Ký app
+## 3. Signing
 
-### Vì sao phải ký đúng cách
+### Why the signing matters
 
-Game cần quyền **Increased Memory Limit** (`com.apple.developer.kernel.increased-memory-limit`). Trên iOS 27, quyền
-này chỉ có tác dụng khi **provisioning profile** cho phép nó. Ký bằng profile không có quyền (profile wildcard
-`com.*`, iLoader, SideStore…) thì game dừng ngay lúc khởi động với lỗi:
+The game needs the **Increased Memory Limit** entitlement (`com.apple.developer.kernel.increased-memory-limit`). On
+iOS 27 it only takes effect when the **provisioning profile** grants it. Signed with a profile that does not (a
+wildcard `com.*` profile, iLoader, SideStore…), the game stops at startup with:
 
 ```text
 [totk] FAIL: reserve guest stack, heap and alias regions
 ```
 
-Cách chắc chắn nhất là để **Xcode tự tạo profile** (automatic signing): Xcode thấy app xin quyền này nên đưa nó vào
-profile. Tài khoản miễn phí (Personal Team) cũng được, nhưng profile chỉ dùng **7 ngày**.
+The reliable way is to let **Xcode create the profile** (automatic signing): Xcode sees that the app asks for the
+entitlement and puts it in the profile. A free account (Personal Team) works too, but its profiles last **7 days**.
 
-### 3.1. Tạo profile bằng một app mẫu trong Xcode
+### 3.1. Make the profile with a template app in Xcode
 
-1. Xcode → File → New → Project → iOS **App**. Đặt **Bundle Identifier** đúng bằng `TOTK_IOS_BUNDLE_ID` ở bước build,
-   chọn **Team** của bạn.
-2. Tab **Signing & Capabilities** → giữ **Automatically manage signing** → **+ Capability** → **Increased Memory Limit**.
-3. Cắm iPhone/iPad vào Mac, chọn máy đó làm đích chạy và bấm **Run** một lần. Xcode đăng ký máy vào team và tạo profile.
-   Muốn một profile cho nhiều máy thì lần lượt Run trên từng máy.
-4. Lấy profile vừa tạo từ app mẫu đã build (Product → Show Build Folder in Finder →
-   `Build/Products/Debug-iphoneos/<Tên>.app/embedded.mobileprovision`). Kiểm tra nó có quyền và có máy của bạn:
+1. Xcode → File → New → Project → iOS **App**. Set the **Bundle Identifier** to the `TOTK_IOS_BUNDLE_ID` used for the
+   build and pick your **Team**.
+2. **Signing & Capabilities** tab → keep **Automatically manage signing** → **+ Capability** → **Increased Memory
+   Limit**.
+3. Connect the iPhone/iPad, pick it as the run destination and press **Run** once. Xcode registers the device with the
+   team and creates the profile. For one profile covering several devices, Run on each of them in turn.
+4. Take the profile from the built template app (Product → Show Build Folder in Finder →
+   `Build/Products/Debug-iphoneos/<Name>.app/embedded.mobileprovision`). Check that it has the entitlement and the
+   device:
 
 ```bash
 security cms -D -i embedded.mobileprovision > profile.plist
 /usr/libexec/PlistBuddy -c 'Print :Entitlements' -c 'Print :ProvisionedDevices' -c 'Print :ExpirationDate' profile.plist
 ```
 
-Phải thấy `com.apple.developer.kernel.increased-memory-limit = true` và UDID của máy
-(`xcrun devicectl list devices` để xem UDID).
+It must show `com.apple.developer.kernel.increased-memory-limit = true` and the device's UDID
+(`xcrun devicectl list devices` lists UDIDs).
 
-### 3.2. Ký bản game
+### 3.2. Sign the game
 
-Tên chứng chỉ ký (`Apple Development: …`) xem bằng `security find-identity -v -p codesigning`. Thay `TEAMID`,
-`com.yourname.totk` và tên chứng chỉ cho đúng của bạn:
+`security find-identity -v -p codesigning` lists the signing certificates (`Apple Development: …`). Replace `TEAMID`,
+`com.yourname.totk` and the certificate name with your own:
 
 ```bash
 cp -cR TOTK_build/totk/build/ios-payload/Payload/TOTK.app ./TOTK.app
@@ -94,15 +100,15 @@ codesign -f -s "Apple Development: you@example.com (XXXXXXXXXX)" --entitlements 
 codesign --verify --strict TOTK.app && codesign -d --entitlements - TOTK.app | grep -A1 memory
 ```
 
-Ký mất khoảng 2 phút (17 GB).
+Signing takes about 2 minutes (17 GB).
 
-### 3.3. (Tuỳ chọn) Đổi tên và icon trên màn hình chính
+### 3.3. (Optional) Home screen name and icon
 
-Làm **trước** khi ký (mọi thay đổi trong `TOTK.app` sau khi ký sẽ làm hỏng chữ ký):
+Do this **before** signing (any change inside `TOTK.app` after signing breaks the signature):
 
 ```bash
 /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Totk' TOTK.app/Info.plist
-# Icon của game (build_app.py đã lấy từ dữ liệu game của bạn):
+# The game's icon (build_app.py extracted it from the game data):
 sips -s format png TOTK_build/totk/build/AppIcon.icns --out icon.png
 sips -z 120 120 icon.png --out 'TOTK.app/AppIcon60x60@2x.png'
 sips -z 180 180 icon.png --out 'TOTK.app/AppIcon60x60@3x.png'
@@ -119,94 +125,100 @@ $B -c 'Add :CFBundleIcons~ipad dict' -c 'Add :CFBundleIcons~ipad:CFBundlePrimary
    -c 'Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:2 string AppIcon83.5x83.5' $P
 ```
 
-## 4. Cài lên máy
+## 4. Install
 
 ```bash
 xcrun devicectl device install app --device <UDID> TOTK.app
 ```
 
-- Dây USB 2.0 (dây đi kèm iPhone) mất khoảng 10 phút cho 17 GB; dây 10 Gb/s trở lên khoảng 2–4 phút. Xem tốc độ:
-  `system_profiler SPUSBHostDataType | grep -A3 -iE 'iphone|ipad'`.
-- Lần đầu với một chứng chỉ: trên máy vào **Cài đặt → Cài đặt chung → Quản lý VPN & thiết bị**, chọn chứng chỉ của
-  bạn → **Tin cậy** (cần mạng). Máy cũng phải bật **Developer Mode**.
-- Cài đè cùng Bundle ID giữ nguyên save, mod và cài đặt.
-- Profile miễn phí hết hạn sau 7 ngày: Run lại app mẫu trong Xcode để lấy profile mới, ký lại (3.2) và cài đè.
+- A USB 2.0 cable (the one that comes with an iPhone) takes about 10 minutes for 17 GB; a 10 Gb/s or faster cable
+  about 2–4 minutes. To see the link speed: `system_profiler SPUSBHostDataType | grep -A3 -iE 'iphone|ipad'`.
+- The first time with a certificate: on the device go to **Settings → General → VPN & Device Management**, pick the
+  certificate → **Trust** (needs a network connection). The device also needs **Developer Mode** on.
+- Installing over an app with the same bundle ID keeps saves, mods and settings.
+- Free profiles expire after 7 days: Run the template app in Xcode again for a new profile, sign again (3.2) and
+  install over the old app.
 
-Lần mở đầu tiên game kiểm tra dữ liệu (khoảng 15 giây). Những lần chơi đầu sẽ giật hơn: máy phải tự ghép pipeline
-cho GPU của nó và lưu vào kho (pipeline archive) ở nền; để game mở ở màn hình tiêu đề một lúc thì những lần sau mượt
-hơn. Kho này gắn với chip GPU nên không chép được từ máy này sang máy khác chip.
+On the first launch the game verifies its data (about 15 seconds). The first sessions stutter more: the device builds
+pipelines for its own GPU and stores them in the pipeline archive in the background. Leaving the game at the title
+screen for a while makes later sessions smoother. The archive is tied to the GPU, so it cannot be copied to a device
+with a different chip.
 
-## 5. Menu cài đặt (nút ⚙︎ giữa cạnh trên)
+## 5. Settings menu (the ⚙︎ button at the top centre)
 
-Mỗi mục có dòng **ⓘ About this setting** giải thích ngay trong game. Lựa chọn được lưu lại cho lần mở sau.
+Each item has an **ⓘ About this setting** entry with an in-game explanation. Choices are kept for the next launch.
 
-| Mục | Lựa chọn | Có hiệu lực |
+| Item | Choices | Takes effect |
 |---|---|---|
-| Frame rate limit | 30 / 40 / **60** / Unlimited | ngay |
-| Resolution | **720p** (Switch cầm tay) / 900p / 1080p (Switch cắm TV) | lần mở sau |
-| Render scale | 50% / 67% / 75% / **100%** (kèm kích thước thật) | lần mở sau |
-| Performance overlay | Off / FPS / **FPS + resolution** / FPS + resolution + CPU, GPU, RAM | ngay |
-| GPU keep-alive (testing) | **On** / Off | lần mở sau |
+| Frame rate limit | 30 / 40 / **60** / Unlimited | at once |
+| Resolution | **720p** (Switch handheld) / 900p / 1080p (Switch docked) | next launch |
+| Render scale | 50% / 67% / 75% / **100%** (with the actual size) | next launch |
+| Performance overlay | Off / FPS / **FPS + resolution** / FPS + resolution + CPU, GPU, RAM | at once |
+| GPU keep-alive (testing) | **On** / Off | next launch |
 
-- **Frame rate limit:** màn hình 120 Hz (iPad Pro, iPhone Pro) mà không giới hạn thì game vẽ 120 hình/giây và rất
-  nóng. Tốc độ game vẫn đúng ở mọi mức.
-- **Resolution** là kích thước hình game xuất ra (cảnh 3D cộng giao diện, chữ, bản đồ). **Render scale** là kích thước
-  cảnh 3D so với Resolution, tính theo mỗi chiều: 1080p ở 67% vẽ cảnh 3D 1280x720 (ít hơn một nửa số điểm ảnh) nhưng
-  chữ và giao diện vẫn nét 1080p. Cảnh 3D là phần tốn GPU nhất.
-- **Overlay đầy đủ** thêm dòng góc dưới phải: trung bình nhân hiệu năng (P) và tiết kiệm điện (E), luồng bận nhất (T),
-  phần GPU game dùng, RAM game đang giữ và phần iOS còn cho (`left`); `left` về 0 thì iOS tắt game.
-- **GPU keep-alive (testing):** giữa các khung hình game cho GPU chạy việc độn để GPU không hạ xung
-  (`TOTK_GPU_KEEPALIVE`, chỉnh trên Mac M4). Trên iPhone 15 Pro khoá 30 FPS, treo máy 22 phút mỗi lượt: bật thì luồng
-  gửi lệnh vẽ tụt còn 1,1 GHz, tắt thì giữ 2,4 GHz; GPU chạy chậm hơn nhưng vẫn kịp 30 FPS. Mới đo 1 lượt mỗi kiểu
-  và chưa đo khi chơi thật; nếu tắt mà khựng hơn thì bật lại.
+- **Frame rate limit:** on a 120 Hz screen (iPad Pro, iPhone Pro) without a limit the game draws 120 frames a second
+  and runs very hot. The game runs at the right speed at every limit.
+- **Resolution** is the size of the finished picture (the 3D scene plus the HUD, text and map). **Render scale** is the
+  size of the 3D scene relative to Resolution, on each axis: 1080p at 67% draws the scene at 1280x720 (less than half
+  the pixels) while text and HUD stay sharp at 1080p. The 3D scene is where most of the GPU time goes.
+- **The full overlay** adds a line at the bottom right: average use of the performance (P) and efficiency (E) cores,
+  the busiest thread (T), the GPU time the game uses, and the memory the game holds with what iOS still allows it
+  (`left`); iOS closes the game when `left` reaches 0.
+- **GPU keep-alive (testing):** between frames the game keeps the GPU busy with filler work so it does not lower its
+  clock (`TOTK_GPU_KEEPALIVE`, tuned on an M4 Mac). iPhone 15 Pro at a 30 FPS cap, left idle 22 minutes per run: with
+  it on, the submit thread fell to 1.1 GHz; with it off, it stayed at 2.4 GHz, and the GPU ran slower but still kept
+  30 FPS. One run each so far and not yet measured in real play; if Off stutters more, turn it back On.
 
-Gợi ý: iPhone 720p / 100% / 60 FPS; iPad M4 1080p / 67% / 40–60 FPS, hoặc 1080p / 100% / 30–40 FPS.
+Suggested: iPhone 720p / 100% / 60 FPS; iPad M4 1080p / 67% / 40–60 FPS, or 1080p / 100% / 30–40 FPS.
 
-Ghi chú kỹ thuật: khi chơi cầm tay, game phóng cảnh 3D theo tỉ lệ khung / 1280 (đo trên iPad: 1600x900 trên khung
-1600x900 ra 2000x1120 và làm hết bộ nhớ texture), nên `render_res_publish` chia bù tỉ lệ này trên iOS.
+Technical note: in handheld mode the game scales the 3D scene by canvas width / 1280 (measured on the iPad: 1600x900 on
+a 1600x900 canvas became 2000x1120 and ran out of texture memory), so `render_res_publish` divides that factor out on
+iOS.
 
-## 6. Mod (ví dụ Việt hoá)
+## 6. Mods (for example a translation)
 
-Bản iOS của nhánh này đọc mod RomFS từ thư mục **`Documents/mods`** của app, cùng quy tắc với bản Mac
-([mods.md](mods.md)): chỉ các file có trong `manifest.tsv` mới được dùng.
+The iOS version on this branch reads RomFS mods from the app's **`Documents/mods`** folder, with the same rules as the
+Mac version ([mods.md](mods.md)): only files listed in `manifest.tsv` are used.
 
-1. Chuẩn bị mod và tạo `manifest.tsv` trên Mac như [mods.md](mods.md) (dùng app Mac cùng phiên bản 1.4.3).
-2. Chép vào máy (mỗi file một lệnh, giữ nguyên đường dẫn RomFS):
+1. Prepare the mod and make `manifest.tsv` on the Mac as in [mods.md](mods.md) (with a Mac app of the same version,
+   1.4.3).
+2. Copy it to the device (one command per file, keeping the RomFS paths):
 
 ```bash
 xcrun devicectl device copy to --device <UDID> --domain-type appDataContainer --domain-identifier com.yourname.totk \
   --source manifest.tsv --destination Documents/mods/manifest.tsv
 ```
 
-Cũng có thể dùng app **Files → On My iPhone/iPad → (tên app) → mods**. Log của game
-(`Documents/log.txt`) có dòng `Documents/mods checked, N files` khi mod được nạp.
+The **Files** app also works: **On My iPhone/iPad → (app name) → mods**. The game's log (`Documents/log.txt`) has a
+`Documents/mods checked, N files` line when the mod is loaded.
 
-Bản 1.4.3 dùng file chữ `Mals/USen.Product.142.sarc.zs` và bảng `System/Resource/ResourceSizeTable.Product.143.Nin_NX_NVN.rsizetable.zs`.
-Mod làm cho 1.4.2 thường có bảng `.142`: phải sửa các mục của file bị thay trong bảng `.143` gốc (lấy kích thước lớn
-hơn) và đặt tên `.143`, nếu không file lớn hơn bản gốc có thể làm game crash.
+Version 1.4.3 uses the text file `Mals/USen.Product.142.sarc.zs` and the table
+`System/Resource/ResourceSizeTable.Product.143.Nin_NX_NVN.rsizetable.zs`. Mods made for 1.4.2 usually ship a `.142`
+table: update the entries of the replaced files in the original `.143` table (keeping the larger size) and name it
+`.143`; otherwise a file larger than the original can crash the game.
 
-## 7. Chép save giữa các máy
+## 7. Copying saves between devices
 
-Save nằm ở `Documents/save` của app. Không có đồng bộ tự động: chép theo **một chiều**, từ máy chơi gần nhất, và sao
-lưu trước.
+Saves are in the app's `Documents/save`. Nothing syncs them: copy **one way**, from the device played last, and back up
+first.
 
 ```bash
-# xem danh sách file
-xcrun devicectl device info files --device <UDID nguồn> --domain-type appDataContainer \
+# list the files
+xcrun devicectl device info files --device <source UDID> --domain-type appDataContainer \
   --domain-identifier com.yourname.totk --subdirectory Documents/save
-# chép từng file về Mac rồi sang máy kia, giữ nguyên đường dẫn, ví dụ:
-xcrun devicectl device copy from --device <UDID nguồn> --domain-type appDataContainer --domain-identifier com.yourname.totk \
+# copy each file to the Mac and then to the other device, keeping the paths, for example:
+xcrun devicectl device copy from --device <source UDID> --domain-type appDataContainer --domain-identifier com.yourname.totk \
   --source Documents/save/save/<id>/slot_00/progress.sav --destination backup/save/<id>/slot_00/progress.sav
-xcrun devicectl device copy to --device <UDID đích> --domain-type appDataContainer --domain-identifier com.yourname.totk \
+xcrun devicectl device copy to --device <target UDID> --domain-type appDataContainer --domain-identifier com.yourname.totk \
   --source backup/save/<id>/slot_00/progress.sav --destination Documents/save/save/<id>/slot_00/progress.sav
 ```
 
-Chép cả `account.uid` và toàn bộ thư mục `save/<id>/` (các `slot_*`, `option.sav`, `album`). Hai máy dùng cùng
-`account.uid` thì game mở đúng thư mục save đó.
+Copy `account.uid` and the whole `save/<id>/` folder (the `slot_*` folders, `option.sav`, `album`). With the same
+`account.uid` on both devices the game opens that save folder.
 
-## 8. Đóng góp shader
+## 8. Contributing shaders
 
-Khi gặp shader chưa có trong danh sách chung, game ghi vào `Documents/shader-list-contribution.txt`. Agent trên Mac
-(`games/totk/ios/tools/shader_contrib_watch.py`, cài khi build iOS) cứ 10 phút kiểm tra máy đang kết nối (cáp hoặc
-cùng Wi‑Fi), và mỗi 500 shader mới thì hỏi một lần bằng hộp thoại trên Mac để gửi lên GitHub issue. Gỡ:
-`python3 games/totk/ios/tools/shader_contrib_watch.py uninstall`.
+When the game meets a shader the shared list lacks, it writes it to `Documents/shader-list-contribution.txt`. The Mac
+agent (`games/totk/ios/tools/shader_contrib_watch.py`, installed by the iOS build) checks connected devices (cable or
+same Wi‑Fi) every 10 minutes and, for every 500 new shaders, asks once in a dialog on the Mac whether to send them as a
+GitHub issue. To remove it: `python3 games/totk/ios/tools/shader_contrib_watch.py uninstall`.
