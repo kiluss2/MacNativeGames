@@ -18,7 +18,7 @@ static NSString *g_no_game_data;   // set when there is no RomFS image to play f
 static void *run_host(void *unused) { (void)unused; return (void *)(intptr_t)totk_host_main(3, host_argv); }
 /* The desktop keyboard-overlay shortcut has no counterpart on iOS. */
 void runtime_shortcut_help_toggle(void) {}
-/* The settings menu (the gear at the top centre), kept in the user defaults:
+/* The settings menu (the gear at the top centre, hidden 4 s after use; a tap there shows it), kept in the user defaults:
    - frame-rate cap (gfx/nvn/hle_nvn.c; 0 = none): a 120 Hz iPad otherwise renders 120 frames a second and runs hot.
      Applied at start as TOTK_FPS_CAP, at run time directly;
    - resolution: the game's output canvas, 16:9, 720p (the handheld canvas) up to 1080p (the docked one, which the
@@ -62,7 +62,23 @@ static void render_size(int out_h, int pct, int *w, int *h) {
 + (Class)layerClass { return CAMetalLayer.class; }
 @end
 
-@interface TOTKGameController : UIViewController @property(nonatomic,strong) TOTKMetalView *gameView; @end
+/* The settings gear, told when its menu opens and closes (UIControl is the delegate of its own menu interaction). */
+@interface TOTKGearButton : UIButton @property(nonatomic) BOOL menuOpen; @property(nonatomic,copy) void (^menuEnded)(void); @end
+@implementation TOTKGearButton
+- (void)contextMenuInteraction:(UIContextMenuInteraction *)interaction willDisplayMenuForConfiguration:(UIContextMenuConfiguration *)configuration
+                      animator:(id<UIContextMenuInteractionAnimating>)animator {
+    [super contextMenuInteraction:interaction willDisplayMenuForConfiguration:configuration animator:animator]; self.menuOpen = YES;
+}
+- (void)contextMenuInteraction:(UIContextMenuInteraction *)interaction willEndForConfiguration:(UIContextMenuConfiguration *)configuration
+                      animator:(id<UIContextMenuInteractionAnimating>)animator {
+    [super contextMenuInteraction:interaction willEndForConfiguration:configuration animator:animator]; self.menuOpen = NO;
+    if (self.menuEnded) self.menuEnded();
+}
+@end
+
+@interface TOTKGameController : UIViewController
+@property(nonatomic,strong) TOTKMetalView *gameView; @property(nonatomic,strong) TOTKGearButton *gear; @property(nonatomic) NSUInteger gearShown;
+@end
 @implementation TOTKGameController
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -73,19 +89,37 @@ static void render_size(int out_h, int pct, int *w, int *h) {
     runtime_ios_attach_layer((CAMetalLayer *)self.gameView.layer, self.gameView);
     TOTKTouchPad *pad=[[TOTKTouchPad alloc] initWithFrame:self.view.bounds];pad.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;[self.view addSubview:pad];
     // Settings: a faint gear at the top centre, between − and +, above the touch pad so its touches never reach the game.
-    UIButton *gear = [UIButton buttonWithType:UIButtonTypeSystem];
+    TOTKGearButton *gear = [TOTKGearButton buttonWithType:UIButtonTypeSystem]; self.gear = gear;
     [gear setImage:[UIImage systemImageNamed:@"gearshape.fill"] forState:UIControlStateNormal];
     gear.tintColor = [UIColor colorWithWhite:1 alpha:.32]; gear.translatesAutoresizingMaskIntoConstraints = NO;
     __weak TOTKGameController *weakSelf = self;
     gear.menu = [UIMenu menuWithChildren:@[[UIDeferredMenuElement elementWithUncachedProvider:^(void (^done)(NSArray<UIMenuElement *> *)) {
         TOTKGameController *me = weakSelf; done(me ? [me settingsMenu] : @[]);   // rebuilt on every open, so the checkmarks are current
     }]]];
-    gear.showsMenuAsPrimaryAction = YES;
+    [gear addTarget:self action:@selector(gearTapped) forControlEvents:UIControlEventTouchUpInside];
+    gear.menuEnded = ^{ [weakSelf showGear]; };
     [self.view addSubview:gear];
     [NSLayoutConstraint activateConstraints:@[[gear.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [gear.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:4],
         [gear.widthAnchor constraintEqualToConstant:44], [gear.heightAnchor constraintEqualToConstant:44]]];
+    [self showGear];
 }
+/* The gear hides 4 s after it was last shown or its menu closed, so nothing sits in the middle of the picture. Hidden it
+   stays at alpha 0.02 (UIKit skips views under 0.01 when hit-testing) with the menu detached from the tap: a tap where it
+   was shows it again, and the next tap opens the menu. */
+- (void)showGear {
+    TOTKGearButton *gear = self.gear; NSUInteger shown = ++self.gearShown;
+    gear.showsMenuAsPrimaryAction = YES;
+    [UIView animateWithDuration:.2 animations:^{ gear.alpha = 1; }];
+    __weak TOTKGameController *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        TOTKGameController *me = weakSelf;
+        if (!me || me.gearShown != shown || me.gear.menuOpen) return;   // shown again since, or the menu is open (it calls back on close)
+        me.gear.showsMenuAsPrimaryAction = NO;
+        [UIView animateWithDuration:.5 animations:^{ me.gear.alpha = .02; }];
+    });
+}
+- (void)gearTapped { if (!self.gear.showsMenuAsPrimaryAction) [self showGear]; }
 /* One submenu: a checkmarked choice among values, stored under key; changed runs after the new value is saved. info, when
    given, adds an "About" item below the choices that shows the explanation. */
 static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, int current, NSArray<NSNumber *> *values,

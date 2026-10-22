@@ -146,7 +146,8 @@ with a different chip.
 
 ## 5. Settings menu (the ⚙︎ button at the top centre)
 
-Each item has an **ⓘ About this setting** entry with an in-game explanation. Choices are kept for the next launch.
+The ⚙︎ sits between − and + and hides 4 seconds after it was last used. Tap that spot once to show it, then tap it
+again to open the menu. Each item has an **ⓘ About this setting** entry with an in-game explanation. Choices are kept for the next launch.
 
 | Item | Choices | Takes effect |
 |---|---|---|
