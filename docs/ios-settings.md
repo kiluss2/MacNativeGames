@@ -146,6 +146,7 @@ Mỗi mục có dòng **ⓘ About this setting** giải thích ngay trong game. 
 | Resolution | **720p** (Switch cầm tay) / 900p / 1080p (Switch cắm TV) | lần mở sau |
 | Render scale | 50% / 67% / 75% / **100%** (kèm kích thước thật) | lần mở sau |
 | Performance overlay | Off / FPS / **FPS + resolution** / FPS + resolution + CPU, GPU, RAM | ngay |
+| GPU keep-alive (testing) | **On** / Off | lần mở sau |
 
 - **Frame rate limit:** màn hình 120 Hz (iPad Pro, iPhone Pro) mà không giới hạn thì game vẽ 120 hình/giây và rất
   nóng. Tốc độ game vẫn đúng ở mọi mức.
@@ -154,6 +155,10 @@ Mỗi mục có dòng **ⓘ About this setting** giải thích ngay trong game. 
   chữ và giao diện vẫn nét 1080p. Cảnh 3D là phần tốn GPU nhất.
 - **Overlay đầy đủ** thêm dòng góc dưới phải: trung bình nhân hiệu năng (P) và tiết kiệm điện (E), luồng bận nhất (T),
   phần GPU game dùng, RAM game đang giữ và phần iOS còn cho (`left`); `left` về 0 thì iOS tắt game.
+- **GPU keep-alive (testing):** giữa các khung hình game cho GPU chạy việc độn để GPU không hạ xung
+  (`TOTK_GPU_KEEPALIVE`, chỉnh trên Mac M4). Trên iPhone 15 Pro khoá 30 FPS, treo máy 22 phút mỗi lượt: bật thì luồng
+  gửi lệnh vẽ tụt còn 1,1 GHz, tắt thì giữ 2,4 GHz; GPU chạy chậm hơn nhưng vẫn kịp 30 FPS. Mới đo 1 lượt mỗi kiểu
+  và chưa đo khi chơi thật; nếu tắt mà khựng hơn thì bật lại.
 
 Gợi ý: iPhone 720p / 100% / 60 FPS; iPad M4 1080p / 67% / 40–60 FPS, hoặc 1080p / 100% / 30–40 FPS.
 

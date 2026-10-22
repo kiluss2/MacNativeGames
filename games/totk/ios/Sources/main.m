@@ -27,12 +27,15 @@ void runtime_shortcut_help_toggle(void) {}
    - render scale: the 3D scene as a share of the resolution on each axis, TOTK_RENDER_RES at start (needs the
      render-resolution patch: TOTK_RENDER_RES set for the build). Both take effect at the next launch;
    - overlay (gfx/nvn/fps_overlay.c): off, the FPS alone, FPS with the picture and render sizes, or also the load line
-     (CPU, GPU, memory). Applied at start and at run time. */
+     (CPU, GPU, memory). Applied at start and at run time;
+   - GPU keep-alive (testing; gfx/nvn/nvn_mtl.m keepalive_start): TOTK_GPU_KEEPALIVE at start, so off means the spinner
+     thread never starts, as in the measured run. Tuned on an M4 Mac; on an iPhone 15 Pro at a 30 FPS cap, 22 idle minutes
+     with it on dropped the submit thread to 1.1 GHz, with it off it stayed at 2.4 GHz (2026-10-22, one run each). */
 void nvn_set_fps_cap(int fps);
 void fps_overlay_set_hud_mode(int mode);   /* gfx/nvn/fps_overlay.h: HUD_MODE_OFF 0, ALL 1, MINIMAL 2, FPS 3 */
 enum { kHudOff = 0, kHudAll = 1, kHudSizes = 2, kHudFps = 3 };
 static NSString *const kFpsCapKey = @"TOTKFpsCap", *const kOutputHeightKey = @"TOTKOutputHeight", *const kRenderScaleKey = @"TOTKRenderScale",
-                *const kHudKey = @"TOTKHud";
+                *const kHudKey = @"TOTKHud", *const kGpuKeepAliveKey = @"TOTKGpuKeepAlive";
 static int saved_setting(NSString *key, int fallback) {
     NSNumber *v = [NSUserDefaults.standardUserDefaults objectForKey:key];
     return v ? v.intValue : fallback;
@@ -41,6 +44,7 @@ static int saved_fps_cap(void) { return saved_setting(kFpsCapKey, 60); }
 static int saved_output_height(void) { return saved_setting(kOutputHeightKey, 720); }
 static int saved_render_scale(void) { return saved_setting(kRenderScaleKey, 100); }   /* percent; 67 means two thirds */
 static int saved_hud(void) { return saved_setting(kHudKey, kHudSizes); }
+static int saved_gpu_keepalive(void) { return saved_setting(kGpuKeepAliveKey, 1); }
 static int width_16_9(int h) { return (h * 16 + 8) / 9; }
 /* The scene size for an output height and a render scale, rounded to even pixels (67% is exactly 2/3: 1080p -> 720p). */
 static void render_size(int out_h, int pct, int *w, int *h) {
@@ -99,7 +103,7 @@ static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, i
     return m;
 }
 - (NSArray<UIMenuElement *> *)settingsMenu {
-    int fps = saved_fps_cap(), out = saved_output_height(), pct = saved_render_scale(), hud = saved_hud(), rw, rh;
+    int fps = saved_fps_cap(), out = saved_output_height(), pct = saved_render_scale(), hud = saved_hud(), ka = saved_gpu_keepalive(), rw, rh;
     render_size(out, pct, &rw, &rh);
     NSMutableArray<NSString *> *scaleLabels = [NSMutableArray array];
     for (NSNumber *p in @[@50, @67, @75, @100]) { int w, h; render_size(out, p.intValue, &w, &h); [scaleLabels addObject:[NSString stringWithFormat:@"%@%% (%dx%d)", p, w, h]]; }
@@ -129,6 +133,12 @@ static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, i
                         "Resolution: the picture size, and the 3D scene size after \"render\" when it differs. Load (bottom right): the average "
                         "use of the performance (P) and efficiency (E) CPU cores, the busiest thread (T), the GPU time the game uses, and the memory "
                         "the game holds with what iOS still allows it (\"left\"); iOS closes the game when that reaches zero."]; }),
+        choice_menu(@"GPU keep-alive (testing)", [NSString stringWithFormat:@"%@, next launch", ka ? @"On" : @"Off"], kGpuKeepAliveKey, ka,
+                    @[@1, @0], @[@"On (default)", @"Off"], restart,
+                    ^{ [weakSelf explain:@"GPU keep-alive (testing)" text:@"Between frames the game keeps the GPU busy with filler work so it "
+                        "does not lower its clock; this was tuned on a Mac. On an iPhone at 30 FPS the filler may instead heat the phone so iOS "
+                        "slows the CPU: in one idle test, Off kept the CPU about twice as fast, while the GPU ran slower but still in time. "
+                        "Not yet tested in real play: if the game stutters more with Off, turn it back On. Takes effect the next time the game starts."]; }),
     ];
 }
 - (void)explain:(NSString *)title text:(NSString *)text {
@@ -138,7 +148,7 @@ static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, i
 }
 - (void)askRestart {
     UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Restart to apply"
-        message:@"Resolution and render scale change when the game starts again. Save your game before quitting." preferredStyle:UIAlertControllerStyleAlert];
+        message:@"Resolution, render scale and GPU keep-alive change when the game starts again. Save your game before quitting." preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"Later" style:UIAlertActionStyleCancel handler:nil]];
     [a addAction:[UIAlertAction actionWithTitle:@"Quit now" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) { (void)x; exit(0); }]];
     [self presentViewController:a animated:YES completion:nil];
@@ -291,6 +301,7 @@ static void audio_observe(void) {
     /* Player mods (runtime/romfs.c), as on the Mac: Documents/mods/manifest.tsv, when present (Files app). */
     setenv("TOTK_ROMFS_MODS",[docs stringByAppendingPathComponent:@"mods"].fileSystemRepresentation,0);
     setenv("TOTK_FPS_CAP",[NSString stringWithFormat:@"%d",saved_fps_cap()].UTF8String,0);
+    setenv("TOTK_GPU_KEEPALIVE",saved_gpu_keepalive()?"1":"0",0);
     { int out = saved_output_height(), rw, rh; render_size(out, saved_render_scale(), &rw, &rh);
       setenv("TOTK_OUTPUT_RES",[NSString stringWithFormat:@"%dx%d",width_16_9(out),out].UTF8String,0);
       setenv("TOTK_IOS_DRAWABLE_H",[NSString stringWithFormat:@"%d",out].UTF8String,0);
