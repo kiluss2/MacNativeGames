@@ -59,9 +59,39 @@ left standing in the open world for 22 minutes each, after 8 minutes of rest eac
   watch in play.
 - **Limits:** one run each, different spots (A's had more CPU work; GPU work not comparable), idle rather than play.
 
+## 2b. Real play: keep-alive off (test plan step 1)
+
+The same settings as session 1 (720p, 100%, 30 FPS cap), about 19 minutes of real play with keep-alive off and the
+translation thread off. From minute 3 on, against session 1 (keep-alive on):
+
+| | Session 1: on | Step 1: off |
+|---|---|---|
+| Average clock (replay thread), median of windows | 1.49 GHz | **2.72 GHz** |
+| Windows under 1.7 GHz | 66% | **5%** |
+| Work per frame / replay CPU time | 22.1 M cycles / 14.7 ms | 25.4 M cycles / **8.4 ms** |
+| Submit + present p50 / p95 | 14.1 / 23.3 ms | **8.5 / 10.2 ms** |
+| GPU p50 / p95 | 13.3 / 17.6 ms | 28.3 / 30.5 ms (GPU 84–88% busy) |
+| Frames over budget per 1,000 frames | 17.7 | **12.8** |
+| Frames over 50 ms | 319 | **154** |
+| Over budget without compiles: submit > 25 ms / GPU > 25 ms | 183 / 75 | 33 / 141 |
+| Present p99 (mean of windows) | 55.0 ms | **46.5 ms** |
+| 20 FPS interval set by the game | 125 | 186 |
+| Footprint | 3.4–3.7 GiB | 3.5–3.7 GiB |
+| Thermal state | not logged (-1) | nominal → fair at 7.2 min → serious at 10.2 min, to the end |
+
+- Off, the CPU keeps its clock through the whole session, and the clock stayed at 2.5–3.4 GHz while the phone was at
+  serious, so session 1's collapse is not heat alone: it follows the keep-alive. Long stutters halved.
+- The GPU runs slower and fills ~28 of the 33 ms; GPU-bound long frames rose (75 → 141), the trade-off section 2
+  expected for heavier scenes.
+- Heat cannot be compared: session 1 has no thermal state. The phone still reaches serious at 10 minutes with it off,
+  so 720p / 100% / 30 FPS is warm on an iPhone 15 Pro either way. By the physics, dropping the spin kernels saves GPU
+  power while the faster CPU spends more, so the net is probably cooler or the same.
+- Decision: keep-alive **off by default on the iPhone**; the iPad keeps it on until measured.
+
 ## 3. What changed (branch `ios-settings-menu`)
 
-- **GPU keep-alive (testing)**, menu, default On: Off sets `TOTK_GPU_KEEPALIVE=0` at the next launch.
+- **GPU keep-alive (testing)**, menu, default Off on the iPhone and On on the iPad (since 2b); the other choice sets
+  `TOTK_GPU_KEEPALIVE` at the next launch.
 - **Thermal state in the log:** `dm_thermal_now()` had only its weak -1 default on iOS. The iOS front end now returns
   `NSProcessInfo.thermalState` (0 nominal, 1 fair, 2 serious, 3 critical) and logs each change.
 - **Translation thread (testing)**, menu, default Off: On sets `TOTK_ASYNC_REPLAY=1`. Comments in gfx/nvn/hle_nvn.c call
@@ -84,7 +114,7 @@ Same settings as session 1 (720p, 100%, 30 FPS cap), about 20 minutes of real pl
 minutes before each run. Copy `Documents/log.txt` after each run, before the game starts again (a new start replaces it).
 
 1. **Keep-alive Off, translation thread Off.** Against session 1: average clock, thermal state, frames over budget,
-   20 FPS switches, GPU time in heavy scenes.
+   20 FPS switches, GPU time in heavy scenes. Done: section 2b.
 2. **Translation thread On** (keep-alive as decided by step 1). Watch for wrong pictures or a crash. Against step 1:
    frames over budget split as in section 1, frame interval p99, footprint.
 

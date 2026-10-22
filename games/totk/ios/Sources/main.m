@@ -30,7 +30,10 @@ void runtime_shortcut_help_toggle(void) {}
      (CPU, GPU, memory). Applied at start and at run time;
    - GPU keep-alive (testing; gfx/nvn/nvn_mtl.m keepalive_start): TOTK_GPU_KEEPALIVE at start, so off means the spinner
      thread never starts, as in the measured run. Tuned on an M4 Mac; on an iPhone 15 Pro at a 30 FPS cap, 22 idle minutes
-     with it on dropped the submit thread to 1.1 GHz, with it off it stayed at 2.4 GHz (2026-10-22, one run each);
+     with it on dropped the submit thread to 1.1 GHz, with it off it stayed at 2.4 GHz (2026-10-22, one run each). In
+     about 18 minutes of real play with it off the clock stayed at 2.7 GHz (on: 1.5), frames over 50 ms halved and the
+     present p99 fell from 55 to 47 ms, so it is off by default on the iPhone. The iPad keeps it on until measured (the
+     keep-alive was tuned on an M4 Mac, the iPad's chip);
    - translation thread (testing; gfx/nvn/hle_nvn.c x_thread): TOTK_ASYNC_REPLAY at start. The comments there call it the
      iPhone default, but nothing set it on iOS: submits are replayed on the game's render thread, after the frame's game
      logic. On, the replay runs on its own thread while the game works on the next frame. Off by default (upstream's
@@ -48,7 +51,8 @@ static int saved_fps_cap(void) { return saved_setting(kFpsCapKey, 60); }
 static int saved_output_height(void) { return saved_setting(kOutputHeightKey, 720); }
 static int saved_render_scale(void) { return saved_setting(kRenderScaleKey, 100); }   /* percent; 67 means two thirds */
 static int saved_hud(void) { return saved_setting(kHudKey, kHudSizes); }
-static int saved_gpu_keepalive(void) { return saved_setting(kGpuKeepAliveKey, 1); }
+static int default_gpu_keepalive(void) { return UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPhone; }
+static int saved_gpu_keepalive(void) { return saved_setting(kGpuKeepAliveKey, default_gpu_keepalive()); }
 static int saved_async_replay(void) { return saved_setting(kAsyncReplayKey, 0); }
 static int width_16_9(int h) { return (h * 16 + 8) / 9; }
 /* The scene size for an output height and a render scale, rounded to even pixels (67% is exactly 2/3: 1080p -> 720p). */
@@ -173,11 +177,12 @@ static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, i
                         "use of the performance (P) and efficiency (E) CPU cores, the busiest thread (T), the GPU time the game uses, and the memory "
                         "the game holds with what iOS still allows it (\"left\"); iOS closes the game when that reaches zero."]; }),
         choice_menu(@"GPU keep-alive (testing)", [NSString stringWithFormat:@"%@, next launch", ka ? @"On" : @"Off"], kGpuKeepAliveKey, ka,
-                    @[@1, @0], @[@"On (default)", @"Off"], restart,
+                    @[@1, @0], default_gpu_keepalive() ? @[@"On (default)", @"Off"] : @[@"On", @"Off (default)"], restart,
                     ^{ [weakSelf explain:@"GPU keep-alive (testing)" text:@"Between frames the game keeps the GPU busy with filler work so it "
-                        "does not lower its clock; this was tuned on a Mac. On an iPhone at 30 FPS the filler may instead heat the phone so iOS "
-                        "slows the CPU: in one idle test, Off kept the CPU about twice as fast, while the GPU ran slower but still in time. "
-                        "Not yet tested in real play: if the game stutters more with Off, turn it back On. Takes effect the next time the game starts."]; }),
+                        "does not lower its clock; this was tuned on a Mac. On an iPhone 15 Pro at 30 FPS it made iOS slow the CPU instead: in "
+                        "18 minutes of play with it Off the CPU stayed about twice as fast and long stutters halved, while the GPU ran slower "
+                        "but still in time, so Off is the iPhone's default. The iPad keeps it On until it is measured there. "
+                        "Takes effect the next time the game starts."]; }),
         choice_menu(@"Translation thread (testing)", [NSString stringWithFormat:@"%@, next launch", ar ? @"On" : @"Off"], kAsyncReplayKey, ar,
                     @[@0, @1], @[@"Off (default)", @"On"], restart,
                     ^{ [weakSelf explain:@"Translation thread (testing)" text:@"Turning the game's drawing commands into Metal work normally "

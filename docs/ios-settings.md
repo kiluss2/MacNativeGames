@@ -162,7 +162,7 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
 | Resolution | **720p** (Switch handheld) / 900p / 1080p (Switch docked) | next launch |
 | Render scale | 50% / 67% / 75% / **100%** (with the actual size) | next launch |
 | Performance overlay | Off / FPS / **FPS + resolution** / FPS + resolution + CPU, GPU, RAM | at once |
-| GPU keep-alive (testing) | **On** / Off | next launch |
+| GPU keep-alive (testing) | On / Off (**Off** on iPhone, **On** on iPad) | next launch |
 | Translation thread (testing) | **Off** / On | next launch |
 
 - **Frame rate limit:** on a 120 Hz screen (iPad Pro, iPhone Pro) without a limit the game draws 120 frames a second
@@ -176,7 +176,9 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
 - **GPU keep-alive (testing):** between frames the game keeps the GPU busy with filler work so it does not lower its
   clock (`TOTK_GPU_KEEPALIVE`, tuned on an M4 Mac). iPhone 15 Pro at a 30 FPS cap, left idle 22 minutes per run: with
   it on, the submit thread fell to 1.1 GHz; with it off, it stayed at 2.4 GHz, and the GPU ran slower but still kept
-  30 FPS. One run each so far and not yet measured in real play; if Off stutters more, turn it back On. The game's
+  30 FPS. In about 18 minutes of real play with it off the clock stayed at 2.7 GHz (1.5 with it on), frames over 50 ms
+  halved and the present p99 fell from 55 to 47 ms, so it is **off by default on the iPhone**. The iPad keeps it on
+  until it is measured there (it was tuned on an M4 Mac). A choice made in the menu is kept either way. The game's
   log (`Documents/log.txt`) records the iOS thermal state (`thermal state` lines at start and on each change, `温控` in
   the present summary every 300 frames: 0 nominal … 3 critical), so a hot phone can be told from a slow thread.
 - **Translation thread (testing):** `TOTK_ASYNC_REPLAY=1`. Turning the game's commands into Metal work then runs on a
