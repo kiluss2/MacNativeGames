@@ -155,6 +155,7 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
 | Render scale | 50% / 67% / 75% / **100%** (with the actual size) | next launch |
 | Performance overlay | Off / FPS / **FPS + resolution** / FPS + resolution + CPU, GPU, RAM | at once |
 | GPU keep-alive (testing) | **On** / Off | next launch |
+| Translation thread (testing) | **Off** / On | next launch |
 
 - **Frame rate limit:** on a 120 Hz screen (iPad Pro, iPhone Pro) without a limit the game draws 120 frames a second
   and runs very hot. The game runs at the right speed at every limit.
@@ -170,6 +171,12 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
   30 FPS. One run each so far and not yet measured in real play; if Off stutters more, turn it back On. The game's
   log (`Documents/log.txt`) records the iOS thermal state (`thermal state` lines at start and on each change, `温控` in
   the present summary every 300 frames: 0 nominal … 3 critical), so a hot phone can be told from a slow thread.
+- **Translation thread (testing):** `TOTK_ASYNC_REPLAY=1`. Turning the game's commands into Metal work then runs on a
+  thread of its own while the game logic of the next frame runs, instead of after it. Aimed at smoother frames when the
+  CPU is the limit, not at heat, and it uses more memory. Off is the upstream default; On is not yet measured on the
+  iPhone.
+
+Measurements and the test plan for the two testing options: [ios-performance-notes.md](ios-performance-notes.md).
 
 Suggested: iPhone 720p / 100% / 60 FPS; iPad M4 1080p / 67% / 40–60 FPS, or 1080p / 100% / 30–40 FPS.
 
