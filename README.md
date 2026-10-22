@@ -221,6 +221,8 @@ What works on 1.9.0 (October 20, an M1 Pro Mac with its built-in 120 Hz display,
 
 ### iPhone and iPad
 
+> **This branch (`ios-settings-menu`):** an in-game settings menu (frame-rate limit, resolution up to 1080p, render scale, performance overlay), player mods and signing with your own Apple ID: see [docs/ios-settings.md](docs/ios-settings.md).
+
 Version 1.4.3 has been played on an **iPhone 14 (iOS 26.6.1)** and an **iPad with the A16 chip (iPadOS 26.7.1)**, both signed with a personal development team in Xcode. Versions 1.0.0, 1.1.2 and 1.2.1 have not been tested on iOS. Breath of the Wild has no iPhone/iPad build yet: `--platform ios` stops with an error for both versions.
 
 - **First launch:** the app checks the game data (about 15 seconds) and imports the shaders it carries, with a progress bar. On an iPhone 14 this takes about 3 minutes before the title appears. Later launches show the title in about 8 seconds.
