@@ -10,7 +10,9 @@ enum { SYSLOAD_MAX_CORES = 32 };
    the game runs). gpu_game: the share of time the GPU spent on our command buffers (the game's rendering, MetalFX; not the
    keep-alive). */
 /* thread_max: the busiest thread of this process, % of one core (-1 = not known yet); thread_name: its name (for the log). */
-typedef struct { int np, ne, p[SYSLOAD_MAX_CORES], e[SYSLOAD_MAX_CORES], gpu_sys, gpu_game, thread_max; char thread_name[32]; } sysload_info;
+/* mem_used: this process's footprint (what iOS counts against its memory limit), bytes; mem_left: what iOS still lets it
+   take (os_proc_available_memory, iOS only), bytes; -1 = not known. */
+typedef struct { int np, ne, p[SYSLOAD_MAX_CORES], e[SYSLOAD_MAX_CORES], gpu_sys, gpu_game, thread_max; char thread_name[32]; int64_t mem_used, mem_left; } sysload_info;
 
 int sysload_enabled(void);                       // TOTK_LOAD_OVERLAY=0 hides the line (Mac default on, iOS off)
 void sysload_start(void);                        // starts the sampler thread once (every 0.5 s)

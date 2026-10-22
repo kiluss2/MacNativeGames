@@ -40,6 +40,10 @@ static const Glyph FONT[] = {
 /* Key 1 cycles all -> minimal (FPS only) -> off -> all. */
 static _Atomic int g_hud_mode = HUD_MODE_ALL;
 int fps_overlay_hud_mode(void) { return atomic_load_explicit(&g_hud_mode, memory_order_relaxed); }
+void fps_overlay_set_hud_mode(int mode) {
+    if (mode >= HUD_MODE_OFF && mode <= HUD_MODE_FPS) atomic_store_explicit(&g_hud_mode, mode, memory_order_relaxed);
+}
+__attribute__((weak)) int runtime_render_size_current(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
 int fps_overlay_hints_enabled(void) { return fps_overlay_hud_mode() != HUD_MODE_OFF; }
 int fps_overlay_full_hud(void) { return fps_overlay_hud_mode() == HUD_MODE_ALL; }
 int fps_overlay_toggle_hints(void) {
@@ -161,7 +165,10 @@ void fps_overlay_text(const fps_overlay_info *info, char *text, size_t n) {
     if (info->gen > 0 && info->fps >= 0) snprintf(gen, sizeof gen, "+%d", info->gen > 999 ? 999 : info->gen);   // interpolated frames a second (key 2)
     // MetalFX did the upscale in the last frames (key 3 selects the manual MetalFX mode); 2K: true 2K output.
     // The whole line in the system font, so switching MetalFX does not switch the font.
-    snprintf(text, n, "FPS %s%s  %s%s%s", fps, gen, ss, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", info->big ? "  2K" : "");
+    if (info->hud_mode == HUD_MODE_FPS) { snprintf(text, n, "FPS %s%s", fps, gen); return; }
+    char rs[24] = "";   // the render size only where it differs from the picture's
+    if (info->render_w > 0 && info->render_h > 0 && (info->render_w != info->screen_w || info->render_h != info->screen_h)) { char r[12]; size_text(r, sizeof r, info->render_w, info->render_h); snprintf(rs, sizeof rs, "  render %s", r); }
+    snprintf(text, n, "FPS %s%s  %s%s%s%s", fps, gen, ss, rs, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", info->big ? "  2K" : "");
 }
 
 void fps_overlay_raster(const fps_overlay_info *info, int scale, uint8_t *out, int *box_w, int *box_h) {

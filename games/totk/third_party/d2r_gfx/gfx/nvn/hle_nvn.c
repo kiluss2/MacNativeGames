@@ -2353,6 +2353,19 @@ void nvn_set_uncapped_interval(int on) {
     atomic_store(&g_uncapped_interval, on != 0);
     LOG("[flag] uncapped_interval = %d", on != 0);
 }
+/* Player frame-rate cap (iOS settings menu, or TOTK_FPS_CAP at start; 0 = none). Display-following pacing holds each frame
+   for enough display ticks to stay at or under it (60 = every second tick at 120 Hz); the uncapped clock runs at it. The
+   real-time frame step keeps game speed right, as for frame interpolation at half the refresh rate. */
+static _Atomic int g_fps_cap = -1;
+void nvn_set_fps_cap(int fps) {
+    atomic_store(&g_fps_cap, fps > 0 ? fps : 0);
+    LOG("[nvn] frame-rate cap %d", fps > 0 ? fps : 0);
+}
+static int fps_cap(void) {
+    int v = atomic_load(&g_fps_cap);
+    if (v < 0) { const char *e = getenv("TOTK_FPS_CAP"); v = e && atoi(e) > 0 ? atoi(e) : 0; atomic_store(&g_fps_cap, v); }
+    return v;
+}
 static int uncapped_interval_on(void) {
     int v = atomic_load(&g_uncapped_interval);
     if (v < 0) { const char *e = getenv("TOTK_UNCAPPED_INTERVAL"); v = UNCAPPED_INTERVAL_FROM_ENV(e); atomic_store(&g_uncapped_interval, v); }
@@ -2728,7 +2741,10 @@ static unsigned present_ticks(const win_t *o) {   /* display ticks per game fram
     int m = mfx_enabled();
     if (m == MFX_HALF && !game_holds_30()) return 2;
     if (m == MFX_30 || game_holds_30()) { int hz = g_paced_hz > 0 ? g_paced_hz : 60; return (unsigned)(hz >= 45 ? (hz + 15) / 30 : 1); }
-    return g_display_mode || (uncapped_now() && !dm_detclock_enabled() && uncapped_interval_on()) || o->interval <= 0 ? 1u : (unsigned)o->interval;
+    unsigned ticks = g_display_mode || (uncapped_now() && !dm_detclock_enabled() && uncapped_interval_on()) || o->interval <= 0 ? 1u : (unsigned)o->interval;
+    int cap = fps_cap();
+    if (cap > 0 && !uncapped_now()) { int hz = g_paced_hz > 0 ? g_paced_hz : 60; unsigned need = (unsigned)((hz + cap - 1) / cap); if (need > ticks) ticks = need; }
+    return ticks;
 }
 static uint64_t present_period(const win_t *o) {
     unsigned itv = present_ticks(o); int m = mfx_enabled(), hz = g_uncapped && !uncapped_now() ? g_paced_hz : g_hz;
@@ -2738,6 +2754,7 @@ static uint64_t present_period(const win_t *o) {
                                     m == MFX_MAX ? (g_uncapped ? "补帧 不限帧：不限帧率，每帧补一帧" : "补帧 不限帧：按游戏的出图间隔，每帧补一帧") :
                                     g_uncapped ? "补帧关：不限帧率" : "补帧关：按游戏的出图间隔"); was = m; }
     if (m == MFX_30 || game_holds_30()) return 1000000000ull / 30;   /* exactly 30 fps, by display ticks or by our own clock */
+    { int cap = fps_cap(); if (cap > 0 && uncapped_now() && hz > cap) hz = cap; }
     return hz > 0 ? (uint64_t)itv * 1000000000ull / (uint64_t)hz : 0;
 }
 /* Exercise production policy, including the shrine's interval=2 and the

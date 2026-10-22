@@ -18,6 +18,35 @@ static NSString *g_no_game_data;   // set when there is no RomFS image to play f
 static void *run_host(void *unused) { (void)unused; return (void *)(intptr_t)totk_host_main(3, host_argv); }
 /* The desktop keyboard-overlay shortcut has no counterpart on iOS. */
 void runtime_shortcut_help_toggle(void) {}
+/* The settings menu (the gear at the top centre), kept in the user defaults:
+   - frame-rate cap (gfx/nvn/hle_nvn.c; 0 = none): a 120 Hz iPad otherwise renders 120 frames a second and runs hot.
+     Applied at start as TOTK_FPS_CAP, at run time directly;
+   - resolution: the game's output canvas, 16:9, 720p (the handheld canvas) up to 1080p (the docked one, which the
+     game's heaps are sized for). TOTK_OUTPUT_RES and the drawable height (TOTK_IOS_DRAWABLE_H) at start; needs code
+     exported with the output patch (TOTK_IOS_OUTPUT_MAX=1920x1080 for the build, runtime/game_patches_v143.c);
+   - render scale: the 3D scene as a share of the resolution on each axis, TOTK_RENDER_RES at start (needs the
+     render-resolution patch: TOTK_RENDER_RES set for the build). Both take effect at the next launch;
+   - overlay (gfx/nvn/fps_overlay.c): off, the FPS alone, FPS with the picture and render sizes, or also the load line
+     (CPU, GPU, memory). Applied at start and at run time. */
+void nvn_set_fps_cap(int fps);
+void fps_overlay_set_hud_mode(int mode);   /* gfx/nvn/fps_overlay.h: HUD_MODE_OFF 0, ALL 1, MINIMAL 2, FPS 3 */
+enum { kHudOff = 0, kHudAll = 1, kHudSizes = 2, kHudFps = 3 };
+static NSString *const kFpsCapKey = @"TOTKFpsCap", *const kOutputHeightKey = @"TOTKOutputHeight", *const kRenderScaleKey = @"TOTKRenderScale",
+                *const kHudKey = @"TOTKHud";
+static int saved_setting(NSString *key, int fallback) {
+    NSNumber *v = [NSUserDefaults.standardUserDefaults objectForKey:key];
+    return v ? v.intValue : fallback;
+}
+static int saved_fps_cap(void) { return saved_setting(kFpsCapKey, 60); }
+static int saved_output_height(void) { return saved_setting(kOutputHeightKey, 720); }
+static int saved_render_scale(void) { return saved_setting(kRenderScaleKey, 100); }   /* percent; 67 means two thirds */
+static int saved_hud(void) { return saved_setting(kHudKey, kHudSizes); }
+static int width_16_9(int h) { return (h * 16 + 8) / 9; }
+/* The scene size for an output height and a render scale, rounded to even pixels (67% is exactly 2/3: 1080p -> 720p). */
+static void render_size(int out_h, int pct, int *w, int *h) {
+    int num = pct == 67 ? 2 : pct, den = pct == 67 ? 3 : 100;
+    *h = (out_h * num / den + 1) & ~1; *w = (width_16_9(out_h) * num / den + 1) & ~1;
+}
 
 @interface TOTKMetalView : UIView @end
 @implementation TOTKMetalView
@@ -34,6 +63,85 @@ void runtime_shortcut_help_toggle(void) {}
     [self.view addSubview:self.gameView];
     runtime_ios_attach_layer((CAMetalLayer *)self.gameView.layer, self.gameView);
     TOTKTouchPad *pad=[[TOTKTouchPad alloc] initWithFrame:self.view.bounds];pad.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;[self.view addSubview:pad];
+    // Settings: a faint gear at the top centre, between − and +, above the touch pad so its touches never reach the game.
+    UIButton *gear = [UIButton buttonWithType:UIButtonTypeSystem];
+    [gear setImage:[UIImage systemImageNamed:@"gearshape.fill"] forState:UIControlStateNormal];
+    gear.tintColor = [UIColor colorWithWhite:1 alpha:.32]; gear.translatesAutoresizingMaskIntoConstraints = NO;
+    __weak TOTKGameController *weakSelf = self;
+    gear.menu = [UIMenu menuWithChildren:@[[UIDeferredMenuElement elementWithUncachedProvider:^(void (^done)(NSArray<UIMenuElement *> *)) {
+        TOTKGameController *me = weakSelf; done(me ? [me settingsMenu] : @[]);   // rebuilt on every open, so the checkmarks are current
+    }]]];
+    gear.showsMenuAsPrimaryAction = YES;
+    [self.view addSubview:gear];
+    [NSLayoutConstraint activateConstraints:@[[gear.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [gear.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:4],
+        [gear.widthAnchor constraintEqualToConstant:44], [gear.heightAnchor constraintEqualToConstant:44]]];
+}
+/* One submenu: a checkmarked choice among values, stored under key; changed runs after the new value is saved. info, when
+   given, adds an "About" item below the choices that shows the explanation. */
+static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, int current, NSArray<NSNumber *> *values,
+                           NSArray<NSString *> *labels, void (^changed)(int), void (^info)(void)) {
+    NSMutableArray<UIAction *> *items = [NSMutableArray array];
+    for (NSUInteger i = 0; i < values.count; i++) {
+        int v = values[i].intValue;
+        UIAction *a = [UIAction actionWithTitle:labels[i] image:nil identifier:nil handler:^(UIAction *action) {
+            (void)action; [NSUserDefaults.standardUserDefaults setInteger:v forKey:key]; if (changed) changed(v);
+        }];
+        a.state = v == current ? UIMenuElementStateOn : UIMenuElementStateOff;
+        [items addObject:a];
+    }
+    NSMutableArray<UIMenuElement *> *children = [NSMutableArray arrayWithObject:[UIMenu menuWithTitle:@"" image:nil identifier:nil
+                                                                                  options:UIMenuOptionsDisplayInline children:items]];
+    if (info) [children addObject:[UIAction actionWithTitle:@"About this setting" image:[UIImage systemImageNamed:@"info.circle"]
+                                                 identifier:nil handler:^(UIAction *action) { (void)action; info(); }]];
+    UIMenu *m = [UIMenu menuWithTitle:title image:nil identifier:nil options:0 children:children];
+    m.subtitle = subtitle;
+    return m;
+}
+- (NSArray<UIMenuElement *> *)settingsMenu {
+    int fps = saved_fps_cap(), out = saved_output_height(), pct = saved_render_scale(), hud = saved_hud(), rw, rh;
+    render_size(out, pct, &rw, &rh);
+    NSMutableArray<NSString *> *scaleLabels = [NSMutableArray array];
+    for (NSNumber *p in @[@50, @67, @75, @100]) { int w, h; render_size(out, p.intValue, &w, &h); [scaleLabels addObject:[NSString stringWithFormat:@"%@%% (%dx%d)", p, w, h]]; }
+    __weak TOTKGameController *weakSelf = self;
+    void (^restart)(int) = ^(int v) { (void)v; [weakSelf askRestart]; };
+    return @[
+        choice_menu(@"Frame rate limit", fps ? [NSString stringWithFormat:@"%d FPS", fps] : @"Unlimited", kFpsCapKey, fps,
+                    @[@30, @40, @60, @0], @[@"30 FPS", @"40 FPS", @"60 FPS", @"Unlimited"], ^(int v) { nvn_set_fps_cap(v); },
+                    ^{ [weakSelf explain:@"Frame rate limit" text:@"The most frames the game draws each second. This iPad's screen shows up to 120, so without a "
+                        "limit the game renders 120 and the GPU never rests. 60 is smooth and much cooler; 40 and 30 are cooler still and save battery. "
+                        "The game runs at the right speed at every limit. Takes effect at once."]; }),
+        choice_menu(@"Resolution", [NSString stringWithFormat:@"%dx%d, next launch", width_16_9(out), out], kOutputHeightKey, out,
+                    @[@720, @900, @1080], @[@"720p (1280x720, Switch handheld)", @"900p (1600x900)", @"1080p (1920x1080, Switch docked)"], restart,
+                    ^{ [weakSelf explain:@"Resolution" text:@"The size of the finished picture: the 3D scene with the hearts, map, text and menus drawn on "
+                        "top. A higher resolution makes text and menus sharper and the whole picture clearer. The screen then scales it to fit. "
+                        "720p is what the Switch shows in handheld mode, 1080p what it shows on a TV. Takes effect the next time the game starts."]; }),
+        choice_menu(@"Render scale", [NSString stringWithFormat:@"%d%% (%dx%d), next launch", pct, rw, rh], kRenderScaleKey, pct,
+                    @[@50, @67, @75, @100], scaleLabels, restart,
+                    ^{ [weakSelf explain:@"Render scale" text:@"How big the 3D world (land, Link, enemies, effects) is drawn, as a share of the resolution "
+                        "on each side; the hearts, map and text always use the full resolution. This is where most of the GPU work goes: 67% draws "
+                        "less than half the pixels of 100% (1080p at 67% draws the world at 720p), so the iPad stays cooler, while the 3D looks a "
+                        "little softer. Takes effect the next time the game starts."]; }),
+        choice_menu(@"Performance overlay", @[@"Off", @"FPS + resolution + load", @"FPS + resolution", @"FPS"][hud % 4], kHudKey, hud,
+                    @[@(kHudOff), @(kHudFps), @(kHudSizes), @(kHudAll)], @[@"Off", @"FPS", @"FPS + resolution", @"FPS + resolution + CPU, GPU, RAM"],
+                    ^(int v) { fps_overlay_set_hud_mode(v); },
+                    ^{ [weakSelf explain:@"Performance overlay" text:@"Numbers in the corners of the picture. FPS: frames drawn each second. "
+                        "Resolution: the picture size, and the 3D scene size after \"render\" when it differs. Load (bottom right): the average "
+                        "use of the performance (P) and efficiency (E) CPU cores, the busiest thread (T), the GPU time the game uses, and the memory "
+                        "the game holds with what iOS still allows it (\"left\"); iOS closes the game when that reaches zero."]; }),
+    ];
+}
+- (void)explain:(NSString *)title text:(NSString *)text {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:text preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+- (void)askRestart {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Restart to apply"
+        message:@"Resolution and render scale change when the game starts again. Save your game before quitting." preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Later" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Quit now" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) { (void)x; exit(0); }]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
@@ -121,7 +229,7 @@ static void audio_observe(void) {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
     NSString *res = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"GameData"];
-    for (NSString *name in @[@"save", @"temp", @"shader-cache", @"game-slot"]) [fm createDirectoryAtPath:[docs stringByAppendingPathComponent:name] withIntermediateDirectories:YES attributes:nil error:nil];
+    for (NSString *name in @[@"save", @"temp", @"shader-cache", @"game-slot", @"mods"]) [fm createDirectoryAtPath:[docs stringByAppendingPathComponent:name] withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *log = [docs stringByAppendingPathComponent:@"log.txt"];
     if (freopen(log.fileSystemRepresentation,"w",stderr)) setvbuf(stderr,NULL,_IOLBF,0);
     setenv("TOTK_ROMFS",[res stringByAppendingPathComponent:@"romfs"].fileSystemRepresentation,1);
@@ -180,6 +288,14 @@ static void audio_observe(void) {
     setenv("TOTK_SHADER_CONTRIB",[docs stringByAppendingPathComponent:@"shader-list-contribution.txt"].fileSystemRepresentation,1);
     setenv("DM_NVN_SHMAP",[res stringByAppendingPathComponent:@"shader-seed/shader_map.tsv"].fileSystemRepresentation,1);
     setenv("DM_MSL_DIR",[res stringByAppendingPathComponent:@"shader-seed"].fileSystemRepresentation,1);
+    /* Player mods (runtime/romfs.c), as on the Mac: Documents/mods/manifest.tsv, when present (Files app). */
+    setenv("TOTK_ROMFS_MODS",[docs stringByAppendingPathComponent:@"mods"].fileSystemRepresentation,0);
+    setenv("TOTK_FPS_CAP",[NSString stringWithFormat:@"%d",saved_fps_cap()].UTF8String,0);
+    { int out = saved_output_height(), rw, rh; render_size(out, saved_render_scale(), &rw, &rh);
+      setenv("TOTK_OUTPUT_RES",[NSString stringWithFormat:@"%dx%d",width_16_9(out),out].UTF8String,0);
+      setenv("TOTK_IOS_DRAWABLE_H",[NSString stringWithFormat:@"%d",out].UTF8String,0);
+      setenv("TOTK_RENDER_RES",[NSString stringWithFormat:@"%dx%d",rw,rh].UTF8String,0); }
+    fps_overlay_set_hud_mode(saved_hud());
     NSString *font = [res stringByAppendingPathComponent:@"font"]; setenv("TOTK_FONT_DIR",font.fileSystemRepresentation,1);
     // Same player environment as the Mac launcher (app/launcher.m); the bundle is read-only, so state goes to Documents.
     setenv("TOTK_PROFILE_DIR",[docs stringByAppendingPathComponent:@"save"].fileSystemRepresentation,1);

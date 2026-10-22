@@ -10,13 +10,19 @@ enum { FPS_OVERLAY_TEX_W = 768, FPS_OVERLAY_TEX_H = 64, FPS_OVERLAY_MAX_SCALE = 
 /* fps / screen size < 0 / 0: not known yet ("--"). mfx: MetalFX upscaled the picture in the last frames. gen > 0: MetalFX
    frame interpolation shows that many generated frames a second besides the game's fps frames -> "FPS 50+50" (key 2).
    big: the game itself outputs more than 1920x1080 (true 2K) -> " 2K" at the end. */
-typedef struct { int fps, screen_w, screen_h, mfx, gen, big; } fps_overlay_info;
+/* hud_mode: fps_overlay_hud_mode() when the line was made, so the cached picture of the line is redrawn when it changes. */
+typedef struct { int fps, screen_w, screen_h, mfx, gen, big, render_w, render_h, hud_mode; } fps_overlay_info;
+/* The scene render size the render-resolution patch set (runtime/game_patches_v143.c; 0 where it is not patched). Weak
+   default in fps_overlay.c returns 0. Shown after the picture size as "render 1280x720". */
+int runtime_render_size_current(unsigned *w, unsigned *h);
 
 int fps_overlay_enabled(void);
 /* Shared user toggle for every in-picture HUD layer: FPS, shader collection and load telemetry. */
 /* Key 1: HUD_MODE_ALL (FPS, shader collection, load and the shortcut reminder) -> HUD_MODE_MINIMAL (FPS only) -> HUD_MODE_OFF. */
-enum { HUD_MODE_OFF = 0, HUD_MODE_ALL = 1, HUD_MODE_MINIMAL = 2 };
+/* HUD_MODE_FPS (the iOS settings menu): the FPS number alone, without the picture and render sizes. */
+enum { HUD_MODE_OFF = 0, HUD_MODE_ALL = 1, HUD_MODE_MINIMAL = 2, HUD_MODE_FPS = 3 };
 int fps_overlay_hud_mode(void);
+void fps_overlay_set_hud_mode(int mode);
 int fps_overlay_hints_enabled(void);   /* the FPS readout shows (all or minimal) */
 int fps_overlay_full_hud(void);        /* everything shows (all) */
 int fps_overlay_toggle_hints(void);   /* atomically steps to the next mode and returns it (HUD_MODE_OFF = nothing shows) */

@@ -12677,6 +12677,10 @@ static int fps_overlay_prepare(int slot, MTLViewport vp, MTLViewport *ovp, float
     uint64_t mfx_at = atomic_load(&g_mfxup_last), gen_at = atomic_load(&g_mfxi_last), cur = atomic_load(&g_cur_frame);   // the last game frame MetalFX did the upscale (" MFX") / an interpolated frame was shown ("+50")
     int gen = gen_at && cur - gen_at < 30 ? fps_overlay_gen_value() : 0;
     fps_overlay_info info = {fps_overlay_value(), (int)lround(vp.width), (int)lround(vp.height), mfx_at && cur - mfx_at < 30, gen > 0 ? gen : 0, atomic_load(&g_pic_big)};
+#if TARGET_OS_IPHONE
+    { unsigned rw = 0, rh = 0; if (runtime_render_size_current(&rw, &rh)) { info.render_w = (int)rw; info.render_h = (int)rh; } }   // the settings menu's render resolution
+#endif
+    info.hud_mode = fps_overlay_hud_mode();
     if (hud_compact()) { char text[96]; fps_overlay_text(&info, text, sizeof text); hud_publish(HUD_FPS, text, 0); return 0; }   // shown in the window's corner panel
     pthread_mutex_lock(&mu);
     if (g_fps_key[slot].scale != scale || memcmp(&g_fps_key[slot].info, &info, sizeof info)) {

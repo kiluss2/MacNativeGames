@@ -99,7 +99,12 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  const char *dh=getenv("TOTK_IOS_DRAWABLE_H");long want=dh?strtol(dh,NULL,10):720;
  /* the 16:9 picture should get about want rows: a screen narrower than 16:9 (an iPad, about 4:3; 2026-10-17) holds it by
     width, so there the drawable is want*16/9 columns wide (1281x890 on a 2360x1640 iPad); an iPhone keeps want rows */
- if(want>0){double h=vw/vh<16.0/9.0?round(want*16.0/9.0*vh/vw):(double)want;if(h<vh){vw=round(vw*h/vh);vh=h;}}
+ /* On the iPad the width is the exact 16:9 width (1920 for 1080 rows) and the height follows: rounding the height first
+    and deriving the width left it a pixel short (1919x1323), so the picture came out 1919x1079. */
+ if(want>0){
+  if(vw/vh<16.0/9.0){double w=round(want*16.0/9.0);if(w<vw){vh=round(vh*w/vw);vw=w;}}
+  else if(want<vh){vw=round(vw*want/vh);vh=(double)want;}
+ }
  metalLayer.drawableSize=CGSizeMake(vw,vh);
  fprintf(stderr,"[totk] view drawable %.0fx%.0f (screen scale %.1f, TOTK_IOS_DRAWABLE_H=%ld)\n",vw,vh,s,want);
  bootOverlay=[[UIView alloc] initWithFrame:host.bounds];bootOverlay.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;

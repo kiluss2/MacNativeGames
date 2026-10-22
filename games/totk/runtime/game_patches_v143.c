@@ -319,7 +319,13 @@ int runtime_output_res(unsigned *w,unsigned *h){
            TOTK_OUTPUT_RES says. The iOS export runs these patches on the Mac to make the phone's embedded code
            (TOTK_EXPORT_IOS), so it follows the same rule: before, auto put the 2560x1440 swapchain into the phone's code,
            and the phone, which carries the heap overlay in its bundle, reserved 88 MiB more for a picture it never shows. */
-        if(TARGET_OS_IPHONE||getenv("TOTK_EXPORT_IOS")){
+        /* Except TOTK_IOS_OUTPUT_MAX=<w>x<h> for the export, at most 1920x1080 (the docked canvas the game's heaps are sized
+           for, so no HeapDef overlay): the phone's code then carries the output patch with that swapchain, and the phone
+           picks its canvas at start (TOTK_OUTPUT_RES from the settings menu, patch_output_res). */
+        const char *mx=getenv("TOTK_IOS_OUTPUT_MAX");char tail;
+        if(!TARGET_OS_IPHONE&&getenv("TOTK_EXPORT_IOS")&&mx&&sscanf(mx,"%ux%u%c",&cw,&ch,&tail)==2&&cw>=640&&ch>=360&&cw<=1920&&ch<=1080){
+            on=1;output_full_at_start=0;
+        }else if(TARGET_OS_IPHONE||getenv("TOTK_EXPORT_IOS")){
             on=0;
             if(e&&*e&&strcmp(e,"0")&&strcmp(e,"auto"))fprintf(stderr,"[totk] TOTK_OUTPUT_RES=%s ignored: iOS shows 720p only\n",e);
         }else if(e&&!strcmp(e,"0"))on=0;
@@ -361,8 +367,25 @@ uint64_t runtime_output_res_extra_bytes(void){
     if(scene)grow*=1.6;
     uint64_t kib=(uint64_t)ceil(113664.0*(1+grow)/1024.0)*1024-113664;return kib<<10;
 }
+#if TARGET_OS_IPHONE
+/* iOS: the canvas the phone asks for (TOTK_OUTPUT_RES, from the settings menu), at most the embedded swapchain; 1280x720
+   (the game's handheld canvas) when unset. */
+static uint64_t ios_output_request(unsigned mw,unsigned mh){
+    unsigned w=1280,h=720;const char *e=getenv("TOTK_OUTPUT_RES");char tail;
+    if(e&&sscanf(e,"%ux%u%c",&w,&h,&tail)!=2){fprintf(stderr,"[totk] TOTK_OUTPUT_RES=%s not <width>x<height>: 1280x720\n",e);w=1280;h=720;}
+    if(w<640||h<360||w>mw||h>mh){fprintf(stderr,"[totk] TOTK_OUTPUT_RES %ux%u outside 640x360..%ux%u: 1280x720\n",w,h,mw,mh);w=1280;h=720;}
+    return pack_size(w,h);
+}
+#endif
 static void patch_output_res(Module *m){
-    unsigned w,h;if(!runtime_output_res(&w,&h))return;
+    unsigned w,h;
+#if TARGET_OS_IPHONE
+    /* The export carries the patch only with TOTK_IOS_OUTPUT_MAX; its swapchain size is in the two embedded words. */
+    { uint32_t b,w0,w1;memcpy(&b,m->base+0x3dcb28,4);if(b==0xd360fc64)return;
+      memcpy(&w0,m->base+0xbdb578,4);memcpy(&w1,m->base+0xbdb584,4);w=(w0>>5)&0xffff;h=(w1>>5)&0xffff; }
+#else
+    if(!runtime_output_res(&w,&h))return;
+#endif
     uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->text_end+15)&~15ULL)+16;
     if(data+0x4000!=m->size||stub+28>((m->text_end+0x3fff)&~0x3fffULL))runtime_fail("1.4.3 output patch layout");
     const Patch guards[]={
@@ -398,7 +421,12 @@ static void patch_output_res(Module *m){
     for(unsigned i=0;i<3;i++)memcpy(m->base+guards[i].off,words+i,4);
  #endif
     uint8_t *page=m->base+data;output_w=w;output_h=h;
+#if TARGET_OS_IPHONE
+    { uint64_t want=ios_output_request(w,h);atomic_store((_Atomic uint64_t *)(void *)(page+32),want);
+      fprintf(stderr,"[totk] 1.4.3 iOS output: canvas %ux%u (swapchain %ux%u)\n",(unsigned)want,(unsigned)(want>>32),w,h); }
+#else
     atomic_store((_Atomic uint64_t *)(void *)(page+32),output_full_at_start?pack_size(w,h):pack_size(1920,1080));
+#endif
     atomic_store((_Atomic uint64_t *)(void *)(page+40),0);
     atomic_store(&output_page,page);   /* Publish initialized state to the HUD on the main thread. */
     fprintf(stderr,"[totk] 1.4.3 output: %ux%u swapchain; starts %s, key 3 cycles MetalFX / native / off; display-config veneer +%#llx\n",w,h,output_full_at_start?"at requested resolution":"at 1920x1080",(unsigned long long)stub);
@@ -423,9 +451,20 @@ static void patch_output_res(Module *m){
    the 3440x1440 canvas 6160x2576). The data page therefore holds the asked size divided by that factor, rewritten when
    key 3 changes the canvas, so the scene is the size asked for on every canvas. */
 static uint8_t *render_page;static unsigned render_w,render_h;
+/* For the FPS overlay (gfx/nvn/fps_overlay.h): the scene size this patch set, 0 when the code is not patched. */
+int runtime_render_size_current(unsigned *w,unsigned *h){
+    if(!render_page)return 0;
+    *w=render_w;*h=render_h;return 1;
+}
 static void render_res_publish(unsigned canvas_w){
     if(!render_page)return;
+#if TARGET_OS_IPHONE
+    /* Handheld (the phone's only mode) scales from its own 1280-wide canvas: measured on an iPad, 1600x900 asked on a
+       1600x900 canvas rendered 2000x1120, and on the 1280x720 canvas 1600x896. */
+    float k=canvas_w>1280?canvas_w/1280.0f:1.0f,v[2]={render_w/k,render_h/k};
+#else
     float k=canvas_w>1920?canvas_w/1920.0f:1.0f,v[2]={render_w/k,render_h/k};
+#endif
     memcpy(render_page+16,v,sizeof v);
     fprintf(stderr,"[totk] 1.4.3 render resolution: %ux%u on a %u-wide canvas (game size %.0fx%.0f, scaled by %.4f)\n",render_w,render_h,canvas_w,v[0],v[1],k);
 }
@@ -470,7 +509,7 @@ static void patch_render_res(Module *m){
     for(unsigned i=0;i<sizeof sites/sizeof *sites;i++)memcpy(m->base+sites[i].off,&want[i],4);
 #endif
     render_page=m->base+data;render_w=w;render_h=h;
-    render_res_publish(output_w?(unsigned)runtime_output_size_current():1920);
+    render_res_publish(output_w?(unsigned)runtime_output_size_current():TARGET_OS_IPHONE?1280:1920);   /* the phone without the output patch: the handheld canvas */
     fprintf(stderr,"[totk] 1.4.3 render resolution patch: scene render size %ux%u%s (4 instructions at main+0x585e48, value on the data page)\n",
             w,h,set?"":" (the game's handheld size; TOTK_RENDER_RES not set)");
 }

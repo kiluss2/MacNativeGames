@@ -18,6 +18,8 @@
 #if TARGET_OS_OSX
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
+#else
+#include <os/proc.h>
 #endif
 
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -28,7 +30,7 @@ static sysload_busy g_busy;   // under g_mu (GPU completion handlers)
 int sysload_enabled(void) {
     static int on = -1;
 #if TARGET_OS_IPHONE
-    const int def = 0;   // no IOKit on iOS; the phone shows only the FPS counter
+    const int def = 1;   // shown only in the settings menu's full overlay; no IOKit, so the GPU is the game's own share
 #else
     const int def = 1;
 #endif
@@ -48,11 +50,21 @@ void sysload_note_gpu(double s, double e) { pthread_mutex_lock(&g_mu); sysload_b
 void sysload_text(char *out, size_t n, const sysload_info *in) {
     size_t o = 0;
     #define PUT(...) do { int k = snprintf(out + o, o < n ? n - o : 0, __VA_ARGS__); if (k > 0) o += (size_t)k; } while (0)
+#if TARGET_OS_IPHONE
+    /* The phone's line fits a small screen: the mean of each core kind, the GPU as the game's own share, the memory. */
+    int ps = 0, es = 0; for (int i = 0; i < in->np; i++) ps += in->p[i]; for (int i = 0; i < in->ne; i++) es += in->e[i];
+    PUT("CPU P %d%% E %d%%", in->np ? ps / in->np : 0, in->ne ? es / in->ne : 0);
+    if (in->thread_max >= 0) PUT("  T %d%%", in->thread_max);
+    if (in->gpu_game >= 0) PUT("  GPU %d%%", in->gpu_game); else PUT("  GPU --");
+#else
     PUT("P"); for (int i = 0; i < in->np; i++) PUT(" %2d%%", in->p[i]);   // every value with % (user, 2026-10-16 night)
     PUT("  E"); for (int i = 0; i < in->ne; i++) PUT(" %2d%%", in->e[i]);
     if (in->thread_max >= 0) PUT("  T %d%%", in->thread_max);   // the busiest thread (user, 2026-10-16 night)
     if (in->gpu_sys >= 0) PUT("  GPU %d%%", in->gpu_sys); else PUT("  GPU --");
     if (in->gpu_game >= 0) PUT(" (%d%%)", in->gpu_game);
+#endif
+    if (in->mem_used > 0) PUT("  RAM %.1fG", in->mem_used / 1073741824.0);
+    if (in->mem_left > 0) PUT(" (%.1fG left)", in->mem_left / 1073741824.0);
     #undef PUT
     if (n) out[n - 1 < o ? n - 1 : o] = 0;
 }
@@ -184,6 +196,13 @@ static void *sampler(void *arg) {
         s.thread_max = busiest_thread((w1 - w0) * 1e6, s.thread_name);
         double gp = w1 > w0 ? (g1 - g0) / (w1 - w0) * 100 : -1;
         s.gpu_game = gp < 0 ? -1 : gp > 100 ? 100 : (int)(gp + 0.5);
+        task_vm_info_data_t vm; mach_msg_type_number_t vc = TASK_VM_INFO_COUNT;
+        s.mem_used = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &vc) == KERN_SUCCESS ? (int64_t)vm.phys_footprint : -1;
+#if TARGET_OS_IPHONE
+        s.mem_left = (int64_t)os_proc_available_memory();
+#else
+        s.mem_left = -1;
+#endif
         for (int i = 0; i < nc && i < ncpu; i++) {
             uint64_t db = b1[i] - b0[i], dt = t1[i] - t0[i]; int v = dt ? (int)((db * 100 + dt / 2) / dt) : 0;
             if (kind[i] == 'P' && s.np < SYSLOAD_MAX_CORES) s.p[s.np++] = v; else if (s.ne < SYSLOAD_MAX_CORES) s.e[s.ne++] = v;
