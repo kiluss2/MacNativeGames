@@ -1,0 +1,4 @@
+{
+  "TOTKFpsCap" => 30
+  "TOTKHud" => 1
+}

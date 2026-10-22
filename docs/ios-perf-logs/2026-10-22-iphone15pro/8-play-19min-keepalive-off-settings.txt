@@ -1,0 +1,5 @@
+{
+  "TOTKFpsCap" => 30
+  "TOTKGpuKeepAlive" => 0
+  "TOTKHud" => 1
+}
