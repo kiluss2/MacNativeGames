@@ -5,23 +5,27 @@
 
 /* Layout inside the safe area (clear of the iPhone's notch, rounded corners and home indicator), like a Switch
    controller: ZL/L and R/ZR along the top with − and + between them, and two columns mirroring each other: on the left
-   the d-pad above the left stick, on the right A/B/X/Y above the camera stick. Each stick is drawn at its resting place
-   until a finger takes it; the sticks sit a little toward the middle. L3 / R3 (stick press) are in the bottom corners,
-   under ZL / ZR.
+   the d-pad above the left stick, on the right A/B/X/Y. L3 / R3 (stick press) are in the bottom corners, under ZL / ZR.
    A touch that misses every button is a stick, centred where the finger went down: the left stick on the left half,
    the camera (right stick) on the right half. Bits are the Npad buttons. While a game controller is connected the layer
-   is hidden; a touch shows it and works as usual, and it hides again 3 seconds after the last finger lifts. */
+   is hidden; a touch shows it and works as usual, and it hides again 3 seconds after the last finger lifts.
+   To cover less of the picture (the user, 2026-10-22): a stick is drawn only while a finger holds it, buttons are drawn
+   smaller than the area that takes their touch, and 3 seconds after the last finger lifts the layer fades to a third of
+   its opacity; a touch brings it back at once. Pressed buttons are drawn brighter. */
 typedef struct { CGPoint at; uint64_t bit; NSString *label; CGFloat size; } TouchButton;
 enum { kButtonCount = 16 };
-static const CGFloat kButtonSize = 46;
+static const CGFloat kButtonSize = 46;        // layout and touch area
+static const CGFloat kButtonDrawn = 38;       // what is drawn of a button or a stick knob
 static const NSTimeInterval kHideAfter = 3;   // seconds after the last finger lifts, with a controller connected
+static const NSTimeInterval kFadeAfter = 3;   // seconds after the last finger lifts, without one
+static const CGFloat kFadedAlpha = .32;       // of the layer when faded: buttons at 32% white become about 10%
 
 @implementation TOTKTouchPad {
     NSMapTable<UITouch *, NSValue *> *points;
     NSMapTable<UITouch *, NSValue *> *leftOrigins;    // where each left-stick touch went down
     NSMapTable<UITouch *, NSValue *> *rightOrigins;   // the same for the camera stick
     BOOL gamepad, concealed;                          // a controller is connected; the layer is hidden for it
-    NSTimer *hideTimer;
+    NSTimer *hideTimer, *fadeTimer;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -34,6 +38,7 @@ static const NSTimeInterval kHideAfter = 3;   // seconds after the last finger l
         [center addObserver:self selector:@selector(controllersChanged:) name:GCControllerDidConnectNotification object:nil];
         [center addObserver:self selector:@selector(controllersChanged:) name:GCControllerDidDisconnectNotification object:nil];
         [self controllersChanged:nil];
+        [self fadeLater];
     }
     return self;
 }
@@ -62,6 +67,15 @@ static const NSTimeInterval kHideAfter = 3;   // seconds after the last finger l
     }];
 }
 - (void)concealIfIdle { if (gamepad && !points.count) [self conceal]; }
+- (void)fadeLater {
+    [fadeTimer invalidate]; fadeTimer = nil;
+    if (points.count) return;
+    __weak TOTKTouchPad *weakSelf = self;
+    fadeTimer = [NSTimer scheduledTimerWithTimeInterval:kFadeAfter repeats:NO block:^(NSTimer *timer) {
+        (void)timer; TOTKTouchPad *pad = weakSelf;
+        if (pad && !pad->points.count) [UIView animateWithDuration:.4 animations:^{ pad.alpha = kFadedAlpha; }];
+    }];
+}
 
 - (CGRect)area { return UIEdgeInsetsInsetRect(self.bounds, self.safeAreaInsets); }
 - (CGFloat)stickRadius { return MIN(70, self.area.size.height * .16); }
@@ -84,11 +98,6 @@ static const NSTimeInterval kHideAfter = 3;   // seconds after the last finger l
     CGFloat side = MAX(self.safeAreaInsets.left, self.safeAreaInsets.right);
     return (side + self.area.size.width * .05 - kButtonSize / 2) / 2;
 }
-- (CGPoint)restingStick:(BOOL)right {
-    CGRect a = self.area; CGFloat inset = self.columnInset + self.stickRadius * 1.9;
-    return CGPointMake(right ? CGRectGetMaxX(a) - inset : CGRectGetMinX(a) + inset, CGRectGetMinY(a) + a.size.height * .80);
-}
-
 - (void)buttons:(TouchButton *)b {
     CGRect a = self.area; CGFloat x = CGRectGetMinX(a), y = CGRectGetMinY(a), w = a.size.width, h = a.size.height, d = self.diamond;
     CGFloat top = y + h * .12, bottom = y + h * .88;
@@ -127,7 +136,8 @@ static void stick_axes(CGPoint from, CGPoint to, CGFloat radius, int32_t *x, int
 }
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    (void)event; concealed = NO; [hideTimer invalidate]; hideTimer = nil;
+    (void)event; concealed = NO; [hideTimer invalidate]; hideTimer = nil; [fadeTimer invalidate]; fadeTimer = nil;
+    [self.layer removeAllAnimations]; self.alpha = 1;
     for (UITouch *t in touches) {
         CGPoint p = [t locationInView:self]; NSValue *v = [NSValue valueWithCGPoint:p]; [points setObject:v forKey:t];
         if ([self buttonAt:p]) continue;
@@ -143,7 +153,7 @@ static void stick_axes(CGPoint from, CGPoint to, CGFloat radius, int32_t *x, int
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     (void)event;
     for (UITouch *t in touches) { [points removeObjectForKey:t]; [leftOrigins removeObjectForKey:t]; [rightOrigins removeObjectForKey:t]; }
-    [self updateState]; [self hideLater];
+    [self updateState]; [self hideLater]; [self fadeLater];
 }
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self touchesEnded:touches withEvent:event]; }
 - (void)safeAreaInsetsDidChange { [super safeAreaInsetsDidChange]; [self setNeedsDisplay]; }
@@ -151,7 +161,7 @@ static void stick_axes(CGPoint from, CGPoint to, CGFloat radius, int32_t *x, int
 static void draw_stick(CGContextRef c, CGPoint o, CGPoint p, CGFloat r) {
     int32_t x, y; stick_axes(o, p, r, &x, &y); CGContextStrokeEllipseInRect(c, CGRectMake(o.x - r, o.y - r, 2 * r, 2 * r));
     CGPoint k = CGPointMake(o.x + x / 32767.0 * r, o.y - y / 32767.0 * r);
-    CGRect knob = CGRectMake(k.x - kButtonSize / 2, k.y - kButtonSize / 2, kButtonSize, kButtonSize);
+    CGRect knob = CGRectMake(k.x - kButtonDrawn / 2, k.y - kButtonDrawn / 2, kButtonDrawn, kButtonDrawn);
     CGContextFillEllipseInRect(c, knob); CGContextStrokeEllipseInRect(c, knob);
 }
 
@@ -160,18 +170,19 @@ static void draw_stick(CGContextRef c, CGPoint o, CGPoint p, CGFloat r) {
     (void)rect; CGContextRef c = UIGraphicsGetCurrentContext(); UIColor *ink = [UIColor colorWithWhite:1 alpha:.32];
     // One fill for every button and knob, set before each fill: drawing a label leaves the context's fill colour at the
     // label's, which once made every button after A (the first drawn) brighter than A and the stick knobs.
-    CGColorRef fill = ink.CGColor; CGContextSetStrokeColorWithColor(c, ink.CGColor); CGContextSetFillColorWithColor(c, fill); CGContextSetLineWidth(c, 2);
+    CGColorRef fill = ink.CGColor, lit = [UIColor colorWithWhite:1 alpha:.6].CGColor;
+    CGContextSetStrokeColorWithColor(c, ink.CGColor); CGContextSetFillColorWithColor(c, fill); CGContextSetLineWidth(c, 2);
     CGFloat r = self.stickRadius;
-    // Each stick is drawn where its finger went down, or at its resting place while idle.
-    if (!leftOrigins.count) { CGPoint rest = [self restingStick:NO]; draw_stick(c, rest, rest, r); }
-    if (!rightOrigins.count) { CGPoint rest = [self restingStick:YES]; draw_stick(c, rest, rest, r); }
+    // A stick is drawn only while a finger holds it, where that finger went down.
     for (UITouch *t in leftOrigins.keyEnumerator) draw_stick(c, [leftOrigins objectForKey:t].CGPointValue, [points objectForKey:t].CGPointValue, r);
     for (UITouch *t in rightOrigins.keyEnumerator) draw_stick(c, [rightOrigins objectForKey:t].CGPointValue, [points objectForKey:t].CGPointValue, r);
-    NSDictionary *attrs = @{NSFontAttributeName: [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold], NSForegroundColorAttributeName: ink};
+    uint64_t pressed = 0;
+    for (UITouch *t in points.keyEnumerator) if (![leftOrigins objectForKey:t] && ![rightOrigins objectForKey:t]) pressed |= [self buttonAt:[points objectForKey:t].CGPointValue];
+    NSDictionary *attrs = @{NSFontAttributeName: [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold], NSForegroundColorAttributeName: ink};
     TouchButton b[kButtonCount]; [self buttons:b];
     for (int i = 0; i < kButtonCount; i++) {
-        CGFloat size = b[i].size; CGRect box = CGRectMake(b[i].at.x - size / 2, b[i].at.y - size / 2, size, size);
-        CGContextSetFillColorWithColor(c, fill); CGContextFillEllipseInRect(c, box); CGContextStrokeEllipseInRect(c, box);
+        CGFloat size = kButtonDrawn; CGRect box = CGRectMake(b[i].at.x - size / 2, b[i].at.y - size / 2, size, size);
+        CGContextSetFillColorWithColor(c, pressed & b[i].bit ? lit : fill); CGContextFillEllipseInRect(c, box); CGContextStrokeEllipseInRect(c, box);
         CGSize z = [b[i].label sizeWithAttributes:attrs]; [b[i].label drawAtPoint:CGPointMake(b[i].at.x - z.width / 2, b[i].at.y - z.height / 2) withAttributes:attrs];
     }
 }

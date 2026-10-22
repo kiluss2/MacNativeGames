@@ -147,7 +147,14 @@ with a different chip.
 ## 5. Settings menu (the ⚙︎ button at the top centre)
 
 The ⚙︎ sits between − and + and hides 4 seconds after it was last used. Tap that spot once to show it, then tap it
-again to open the menu. Each item has an **ⓘ About this setting** entry with an in-game explanation. Choices are kept for the next launch.
+again to open the menu.
+
+The touch controls also cover less of the picture than upstream's: a stick is drawn only while a finger holds it
+(touching anywhere on a half still makes a stick there), buttons are drawn at 38 points while still taking touches
+over their old 46, pressed buttons light up, and 3 seconds after the last finger lifts the whole layer fades to about
+a third; the next touch brings it back at once.
+
+Each item has an **ⓘ About this setting** entry with an in-game explanation. Choices are kept for the next launch.
 
 | Item | Choices | Takes effect |
 |---|---|---|
