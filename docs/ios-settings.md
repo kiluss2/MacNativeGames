@@ -101,7 +101,9 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
 | Screen refresh (testing) | **Full** / Match the frame rate limit | next launch |
 
 - **Frame rate limit:** on a 120 Hz screen (iPad Pro, iPhone Pro) without a limit the game draws 120 frames a second
-  and runs very hot. The game runs at the right speed at every limit.
+  and runs very hot. The game runs at the right speed at every limit. On an iPhone 15 Pro at 720p / 100% the GPU needs
+  about 20 ms a frame in play, so 60 lands at 40–45 FPS and the game's own controller switches between 60 and 30; 40
+  holds steady.
 - **Resolution** is the size of the finished picture (the 3D scene plus the HUD, text and map). **Render scale** is the
   size of the 3D scene relative to Resolution, on each axis: 1080p at 67% draws the scene at 1280x720 (less than half
   the pixels) while text and HUD stay sharp at 1080p. The 3D scene is where most of the GPU time goes.
@@ -128,7 +130,7 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
 
 Measurements and the test plan for the testing options: [ios-performance-notes.md](ios-performance-notes.md).
 
-Suggested: iPhone 720p / 100% / 60 FPS; iPad M4 1080p / 67% / 40–60 FPS, or 1080p / 100% / 30–40 FPS.
+Suggested: iPhone 720p / 100% / 40 FPS (60 needs a lower render scale; 75% not yet measured); iPad M4 1080p / 67% / 40–60 FPS, or 1080p / 100% / 30–40 FPS.
 
 Technical note: in handheld mode the game scales the 3D scene by canvas width / 1280 (measured on the iPad: 1600x900 on
 a 1600x900 canvas became 2000x1120 and ran out of texture memory), so `render_res_publish` divides that factor out on

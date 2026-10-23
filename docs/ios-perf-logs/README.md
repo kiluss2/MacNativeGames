@@ -3,8 +3,9 @@
 Raw `Documents/log.txt` files behind [ios-performance-notes.md](../ios-performance-notes.md). This folder holds logs
 only; leave it out when proposing the code upstream.
 
-The app's container paths are replaced with `<data container>` and `<app bundle>`; nothing else is changed. The logs
-hold no game data. Each start replaces `log.txt` on the device, so every file is one run.
+The app's container paths are replaced with `<data container>` and `<app bundle>`, and from 2026-10-23 on a Mac's
+device name in `save-sync` lines with `<Mac name>`; nothing else is changed. The logs hold no game data. Each start
+replaces `log.txt` on the device, so every file is one run.
 
 ## 2026-10-22, iPhone 15 Pro (iOS 27), bundle `com.kiluss.totk`
 
@@ -29,7 +30,18 @@ mod loaded.
 |---|---|---|
 | `1-play-6min-keepalive-off.log` | About 6.5 minutes of play: notes section 2d (the game's controller holds 30 FPS while the idle GPU clocks down); also the first save sync on a device (a conflict resolved to the iPhone's save, then an upload) | default 60 FPS cap, keep-alive off from the menu (`1-play-6min-keepalive-off-settings.txt`), 720p, save sync on |
 
-The lines to read are listed in the notes (`翻译细项`, `计时`, `上屏`, `[长帧]`, `游戏设出图间隔`, `thermal state`).
+## 2026-10-23, iPhone 15 Pro (iOS 27), bundle `com.kiluss.totk`
+
+Both runs: 720p, render scale 100%, keep-alive off, translation thread off, save sync on, a Việt hoá RomFS mod loaded.
+The cap was changed in play (`frame-rate cap` lines).
+
+| File | Run | Settings |
+|---|---|---|
+| `1-play-4min-caps-before-fix.log` | About 3.7 minutes on the day's first build, before the cap fix (a6d47e8): cap 30 ran at about 15 FPS (65.7 ms p50), 40 at about 22 FPS (45.4 ms), 60 at 30 or 60 FPS with the game's present interval: notes section 3 | caps 30, 60, 40, 30, 40, 60, 40 |
+| `2-play-20min-caps-40-30-60.log` | About 20 minutes of real play on the fixed build (ca33d5d): notes section 2e (40 FPS steady, 60 GPU-bound, thermal serious at 5.6 min) | caps 40, 60, 30, 60; Screen refresh Full; charging at 95% throughout |
+
+The lines to read are listed in the notes (`翻译细项`, `计时`, `上屏`, `[长帧]`, `游戏设出图间隔`, `thermal state`,
+`battery`).
 For example, the average clock per 300 frames:
 
 ```bash

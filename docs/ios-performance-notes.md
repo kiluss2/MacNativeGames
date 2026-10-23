@@ -1,7 +1,7 @@
 # iPhone performance notes (1.4.3)
 
 Measurements on an iPhone 15 Pro (iOS 27) and what they led to: the two **(testing)** options in the settings menu
-([ios-settings.md](ios-settings.md)) and thermal state in the log. Status as of 2026-10-22. The raw logs of every run
+([ios-settings.md](ios-settings.md)) and thermal state in the log. Status as of 2026-10-23. The raw logs of every run
 below are in [`ios-perf-logs/`](ios-perf-logs/) (logs only).
 
 All numbers come from the game's own log, `Documents/log.txt` in the app container
@@ -128,6 +128,39 @@ for a while drops the game to 30 FPS.
 The same log has the first save sync on a device: a conflict with the iPhone's upload, resolved to the iPhone's save,
 then an upload after the next save.
 
+## 2e. Frame-rate caps after the 120 Hz fix, phone charging
+
+iPhone 15 Pro, the build with the cap fix and the battery log (ca33d5d), 720p, render scale 100%, keep-alive off,
+translation thread off, Screen refresh Full, about 20 minutes of real play with the cap changed in play: 40 FPS, 60 for
+15 s, 30, then 60 for the last 23 s (`2026-10-23-iphone15pro/2-play-20min-caps-40-30-60.log`). The phone was charging
+at 95% throughout (no `battery` change in 20 minutes).
+
+| | 40 FPS, 0–8.9 min | 30 FPS, 9.2–19.8 min | 60 FPS, 38 s in two stretches |
+|---|---|---|---|
+| Frame time p50 / p95 | 25.1 / 26.4 ms | 33.6 / 34.6 ms | 17–25 / 23–34 ms per window |
+| GPU p50 / p95 | 20.9 / 21.6 ms (GPU 85% busy) | 28.5 / 29.7 ms (87%) | 14–20 / 20–30 ms |
+| Submit + present p50 | 9.2 ms | 7.9 ms | 5–10 ms |
+| Average clock (replay thread), median | 2.94 GHz (3.7 until fair) | 2.30 GHz | 2.0–2.8 GHz |
+| Frames over budget | 88 (4.2 per 1,000) | 9 (0.5 per 1,000) | 27 |
+| Present interval set by the game | 32 times | 6 | 23 |
+| Thermal state | fair at 1.8 min, serious at 5.6 min | serious to the end | serious |
+
+- **The fix holds:** each cap paces at its own rate, 40 FPS at 25.1 ms with a p95 of 26.4. On the build before it, a
+  cap of 40 ran at about 22 FPS and 30 at about 15 (`2026-10-23-iphone15pro/1-play-4min-caps-before-fix.log`).
+- **60 FPS is GPU-bound at 720p / 100%.** In play the GPU takes 19–20 ms a frame where 60 FPS has 16.7, so most frames
+  wait one more 120 Hz refresh (25 ms, 40 FPS) and the game's controller switches the present interval between 1, 2
+  and 3 (23 times in 38 s). A lighter view reached 17.3 ms (58 FPS). The CPU is not the limit (submit + present
+  5–10 ms).
+- **The phone heats at each of these caps.** The GPU stays 85–87% busy at 40 and at 30 FPS: iOS lowers its clock while
+  it keeps up, so its time per frame grows with the budget (21 ms at 40, 28.5 at 30, 28.3 in 2b). At 40 FPS the phone
+  reached serious at 5.6 minutes (2b at 30 FPS: 10.2 minutes, charging not logged then), and 10.6 minutes at 30 FPS did
+  not bring it back to fair. A lower clock should cost less energy per frame, but this run cannot show it: there is no
+  power reading and the phone was charging.
+- **Charging:** the battery stayed at 95% for 20 minutes, so the charger covered the game's drain, and charging adds
+  heat of its own. Compare settings unplugged (test plan steps 3 and 4).
+- What is left is the GPU work per frame: a lower render scale (test plan step 4), or the GPU cost of the translation
+  (section 5).
+
 ## 3. What changed (branch `ios-settings-menu`)
 
 - **GPU keep-alive (testing)**, menu, default Off on the iPhone and On on the iPad (since 2b); the other choice sets
@@ -141,8 +174,9 @@ then an upload after the next save.
   (more memory).
 - **Frame-rate cap on 120 Hz screens** (2026-10-23): since upstream 2338bb0 a 120 Hz iPhone/iPad runs on the uncapped
   clock, where the game's present interval counts 120 Hz ticks, and the menu's cap multiplied it (iPhone 15 Pro: cap 30
-  gave 10–15 fps, cap 60 gave 20–30). A cap below the clock's ceiling now suspends it, and display-following pacing
-  holds whole display ticks as before (hle_nvn.c `uncapped_now`; the present-interval probe covers it).
+  gave 10–15 fps, cap 60 gave 20–30; `2026-10-23-iphone15pro/1-play-4min-caps-before-fix.log`). A cap below the
+  clock's ceiling now suspends it, and display-following pacing holds whole display ticks as before (hle_nvn.c
+  `uncapped_now`; the present-interval probe covers it). Measured after the fix: section 2e.
 - **Battery in the log**: level, charging and Low Power Mode at start and on each change (Low Power Mode slows the CPU
   without changing the thermal state).
 - **Screen refresh (testing)**, menu, default Full: Match the frame rate limit sets `TOTK_LINK_MATCH_CAP=1`, and the
@@ -170,6 +204,8 @@ minutes before each run. Copy `Documents/log.txt` after each run, before the gam
 3. **Screen refresh: Full, then Match the frame rate limit**, 30 FPS cap, unplugged, each run started at the same battery
    level and after the phone has cooled. Against each other: battery drop per minute (`battery` lines), thermal state over
    time, average clock, frames over budget and frame interval p95 / p99 (late frames cost more at 30 Hz).
+4. **Render scale 75% at a 60 FPS cap**, unplugged, after the phone has cooled. Against section 2e: GPU p50 (60 FPS
+   needs it under 16.7 ms), frame time p50 / p95, present interval switches, thermal state over time.
 
 ## 5. Open items not covered here
 
@@ -177,3 +213,6 @@ minutes before each run. Copy `Documents/log.txt` after each run, before the gam
   [kiluss2/MacNativeGames#1](https://github.com/kiluss2/MacNativeGames/issues/1)): done upstream. Render pipelines the
   game builds go into the contribution file (d655ee4), and the iPhone/iPad warms the shared list's pipelines and draws
   while new ones are prepared (fce3ea2). Not yet measured on this branch.
+- GPU cost per frame (section 2e): in play the game draws about 122 render passes a frame (`渲染通道` lines). A Metal
+  GPU trace of one frame in Xcode would show which passes cost the most and whether the translation adds GPU work of
+  its own. Not started.
