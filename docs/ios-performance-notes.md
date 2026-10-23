@@ -158,6 +158,7 @@ minutes before each run. Copy `Documents/log.txt` after each run, before the gam
 
 ## 5. Open items not covered here
 
-- Pipelines met in play are not added to the pipeline archive on the iPhone (upstream 30a1b93); the 93 pipeline
-  stutters of session 1 are that.
-- Sharing pipelines between players: [kiluss2/MacNativeGames#1](https://github.com/kiluss2/MacNativeGames/issues/1).
+- Pipelines met in play and sharing them between players (the 93 pipeline stutters of session 1;
+  [kiluss2/MacNativeGames#1](https://github.com/kiluss2/MacNativeGames/issues/1)): done upstream. Render pipelines the
+  game builds go into the contribution file (d655ee4), and the iPhone/iPad warms the shared list's pipelines and draws
+  while new ones are prepared (fce3ea2). Not yet measured on this branch.

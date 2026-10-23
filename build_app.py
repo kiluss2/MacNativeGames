@@ -1910,7 +1910,7 @@ def main(argv):
     say(f'4/4 app: assembling {out}')
     if args.platform=='ios':
         run([py, 'ios/tools/build_ipa.py', '--tree', tree, '--out', out, '--version', version,
-             '--logs', logs, '--app-name', IOS_APP_NAME, '--bundle-id', os.environ.get('TOTK_IOS_BUNDLE_ID', BUNDLE_ID),
+             '--logs', logs, '--app-name', IOS_APP_NAME, '--bundle-id', BUNDLE_ID,
              *(['--image-outside'] if args.ios_game_data == 'documents' else [])], logs/'build-ipa.log', cwd=tree, env=env)
         if not args.no_shader_reminder:
             # The iOS app never asks during play; while the device is connected, this Mac asks to send the shaders the

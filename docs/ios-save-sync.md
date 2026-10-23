@@ -2,7 +2,7 @@
 
 Status as of 2026-10-22: implemented on branch `ios-settings-menu` (runtime/save_sync.m), scenario-tested on the Mac
 and the nearby-device pass tried with an iPhone 15 Pro; not yet tested end to end through iCloud on the devices.
-Copying by hand still works: [ios-settings.md, section 7](ios-settings.md#7-copying-saves-between-devices).
+Copying by hand still works: [ios-settings.md, section 5](ios-settings.md#5-copying-saves-between-devices).
 
 ## Setting it up
 

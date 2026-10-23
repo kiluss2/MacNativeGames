@@ -1,89 +1,58 @@
-# iPhone / iPad: build, sign, settings menu
+# iPhone / iPad: settings menu, mods and saves
 
-How to build the iPhone/iPad version of Tears of the Kingdom 1.4.3, sign it with an Apple ID (a free account works
-too), install it, use the settings menu, add mods and copy saves between devices.
+What this branch adds to upstream's iPhone/iPad build of Tears of the Kingdom 1.4.3: an in-game settings menu, slimmer
+touch controls, mods, save sync and copying saves between devices. Building, signing and installing are upstream's
+([README](../README.md#build-the-app)); this page covers only what differs.
 
 Until it is merged upstream, this lives on the `ios-settings-menu` branch of
 [kiluss2/MacNativeGames](https://github.com/kiluss2/MacNativeGames/tree/ios-settings-menu).
 
 Tested on an iPad Pro 11" (M4, iPadOS 27) and an iPhone 15 Pro (iOS 27).
 
-## 1. Requirements
+## 1. Build
 
-- An Apple silicon Mac, macOS 26 or later, **Xcode 26 or later** (the full app, with the iOS SDK and the Metal
-  toolchain).
-- Tools: `brew install opus libvpx python@3.14 xcodegen cmake ninja`
-- The Metal toolchain (to compile shaders ahead of time): `xcodebuild -downloadComponent MetalToolchain`
-- The base game 1.0.0 (`0100F2C0115B6000`, XCI or NSP), the 1.4.3 update (NSP/NSZ) and your own `prod.keys`.
-- About **60 GB** free for the first iOS build.
-- An Apple ID signed in under **Xcode → Settings → Accounts** (a free account is enough).
-
-## 2. Build
+Upstream's iOS build with two more variables, which the Resolution and Render scale items need:
 
 ```bash
 git clone -b ios-settings-menu https://github.com/kiluss2/MacNativeGames
 cd MacNativeGames
-TOTK_IOS_OUTPUT_MAX=1920x1080 TOTK_RENDER_RES=1280x720 TOTK_IOS_BUNDLE_ID=com.yourname.totk \
+TOTK_IOS_OUTPUT_MAX=1920x1080 TOTK_RENDER_RES=1280x720 \
   python3.14 build_app.py ~/Games/totk.xci --update ~/Games/1.4.3.nsp -k ~/keys/prod.keys \
   --platform ios -o ~/Games/TOTK.ipa
 ```
-
-All three environment variables are needed for the whole menu to work:
 
 | Variable | Effect |
 |---|---|
 | `TOTK_IOS_OUTPUT_MAX=1920x1080` | Embeds the output patch in the iOS code, so Resolution can be set to 720p, 900p or 1080p. At most 1920x1080: the game's heaps are already sized for it, so no game data needs changing. |
 | `TOTK_RENDER_RES=1280x720` | Embeds the 3D scene resolution patch, so Render scale works. The actual size is picked by the iPhone/iPad at each launch. |
-| `TOTK_IOS_BUNDLE_ID=com.yourname.totk` | The app's bundle ID. Use one of your own: a bundle ID can be registered by only one team. |
 
-The first build takes a few hours (it compiles shaders and pipelines for iOS). Later builds reuse the `TOTK_build`
-folder (next to the game file, or where `--work` points), so they take about 5 minutes. The unsigned app is
-`TOTK_build/totk/build/ios-payload/Payload/TOTK.app` (also packed as `TOTK.ipa`).
+Upstream's `--ios-game-data documents` (the game image kept in Documents and copied once) has not been tried with
+this branch yet.
 
-`--no-shader-reminder` skips installing the Mac agent that offers to send new shaders.
+## 2. Sign and install
 
-## 3. Signing
+Upstream's `games/totk/ios/tools/install_device.py` signs with your own Xcode team and installs over the cable (README,
+[iPhone and iPad](../README.md#iphone-and-ipad)); `--bundle-id com.yourname.totk` picks the bundle ID.
 
-### Why the signing matters
-
-The game needs the **Increased Memory Limit** entitlement (`com.apple.developer.kernel.increased-memory-limit`). On
-iOS 27 it only takes effect when the **provisioning profile** grants it. Signed with a profile that does not (a
-wildcard `com.*` profile, iLoader, SideStore…), the game stops at startup with:
+The game needs the **Increased Memory Limit** entitlement (`com.apple.developer.kernel.increased-memory-limit`), and on
+iOS 27 it only takes effect when the provisioning profile grants it. Signed with a profile that does not (a wildcard
+`com.*` profile, iLoader, SideStore…), the game stops at startup with:
 
 ```text
 [totk] FAIL: reserve guest stack, heap and alias regions
 ```
 
-The reliable way is to let **Xcode create the profile** (automatic signing): Xcode sees that the app asks for the
-entitlement and puts it in the profile. A free account (Personal Team) works too, but its profiles last **7 days**.
+### With a profile you already have
 
-### 3.1. Make the profile with a template app in Xcode
-
-1. Xcode → File → New → Project → iOS **App**. Set the **Bundle Identifier** to the `TOTK_IOS_BUNDLE_ID` used for the
-   build and pick your **Team**.
-2. **Signing & Capabilities** tab → keep **Automatically manage signing** → **+ Capability** → **Increased Memory
-   Limit**.
-3. Connect the iPhone/iPad, pick it as the run destination and press **Run** once. Xcode registers the device with the
-   team and creates the profile. For one profile covering several devices, Run on each of them in turn.
-4. Take the profile from the built template app (Product → Show Build Folder in Finder →
-   `Build/Products/Debug-iphoneos/<Name>.app/embedded.mobileprovision`). Check that it has the entitlement and the
-   device:
+For a profile Xcode on this Mac does not make (another team's certificate, one profile for several devices): check that
+the profile has the entitlement and the device, then set the bundle ID, sign and install. Replace `TEAMID`,
+`com.yourname.totk` and the certificate name (`security find-identity -v -p codesigning`) with your own:
 
 ```bash
 security cms -D -i embedded.mobileprovision > profile.plist
 /usr/libexec/PlistBuddy -c 'Print :Entitlements' -c 'Print :ProvisionedDevices' -c 'Print :ExpirationDate' profile.plist
-```
-
-It must show `com.apple.developer.kernel.increased-memory-limit = true` and the device's UDID
-(`xcrun devicectl list devices` lists UDIDs).
-
-### 3.2. Sign the game
-
-`security find-identity -v -p codesigning` lists the signing certificates (`Apple Development: …`). Replace `TEAMID`,
-`com.yourname.totk` and the certificate name with your own:
-
-```bash
 cp -cR TOTK_build/totk/build/ios-payload/Payload/TOTK.app ./TOTK.app
+/usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.yourname.totk' TOTK.app/Info.plist
 cp embedded.mobileprovision TOTK.app/embedded.mobileprovision
 cat > entitlements.plist <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -98,53 +67,17 @@ cat > entitlements.plist <<'EOF'
 EOF
 codesign -f -s "Apple Development: you@example.com (XXXXXXXXXX)" --entitlements entitlements.plist --generate-entitlement-der TOTK.app
 codesign --verify --strict TOTK.app && codesign -d --entitlements - TOTK.app | grep -A1 memory
-```
-
-Signing takes about 2 minutes (17 GB).
-
-### 3.3. (Optional) Home screen name and icon
-
-Do this **before** signing (any change inside `TOTK.app` after signing breaks the signature):
-
-```bash
-/usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Totk' TOTK.app/Info.plist
-# The game's icon (build_app.py extracted it from the game data):
-sips -s format png TOTK_build/totk/build/AppIcon.icns --out icon.png
-sips -z 120 120 icon.png --out 'TOTK.app/AppIcon60x60@2x.png'
-sips -z 180 180 icon.png --out 'TOTK.app/AppIcon60x60@3x.png'
-sips -z 152 152 icon.png --out 'TOTK.app/AppIcon76x76@2x~ipad.png'
-sips -z 167 167 icon.png --out 'TOTK.app/AppIcon83.5x83.5@2x~ipad.png'
-P=TOTK.app/Info.plist; B=/usr/libexec/PlistBuddy
-$B -c 'Add :CFBundleIcons dict' -c 'Add :CFBundleIcons:CFBundlePrimaryIcon dict' \
-   -c 'Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles array' \
-   -c 'Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:0 string AppIcon60x60' $P
-$B -c 'Add :CFBundleIcons~ipad dict' -c 'Add :CFBundleIcons~ipad:CFBundlePrimaryIcon dict' \
-   -c 'Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles array' \
-   -c 'Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:0 string AppIcon60x60' \
-   -c 'Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:1 string AppIcon76x76' \
-   -c 'Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:2 string AppIcon83.5x83.5' $P
-```
-
-## 4. Install
-
-```bash
 xcrun devicectl device install app --device <UDID> TOTK.app
 ```
 
-- A USB 2.0 cable (the one that comes with an iPhone) takes about 10 minutes for 17 GB; a 10 Gb/s or faster cable
-  about 2–4 minutes. To see the link speed: `system_profiler SPUSBHostDataType | grep -A3 -iE 'iphone|ipad'`.
+- Signing takes about 2 minutes (17 GB). Installing over a USB 2.0 cable (the one that comes with an iPhone) takes
+  about 10 minutes, over a 10 Gb/s or faster cable about 2–4 minutes
+  (`system_profiler SPUSBHostDataType | grep -A3 -iE 'iphone|ipad'` shows the link speed).
 - The first time with a certificate: on the device go to **Settings → General → VPN & Device Management**, pick the
   certificate → **Trust** (needs a network connection). The device also needs **Developer Mode** on.
 - Installing over an app with the same bundle ID keeps saves, mods and settings.
-- Free profiles expire after 7 days: Run the template app in Xcode again for a new profile, sign again (3.2) and
-  install over the old app.
 
-On the first launch the game verifies its data (about 15 seconds). The first sessions stutter more: the device builds
-pipelines for its own GPU and stores them in the pipeline archive in the background. Leaving the game at the title
-screen for a while makes later sessions smoother. The archive is tied to the GPU, so it cannot be copied to a device
-with a different chip.
-
-## 5. Settings menu (the ⚙︎ button at the top centre)
+## 3. Settings menu (the ⚙︎ button at the top centre)
 
 The ⚙︎ sits between − and + and hides 4 seconds after it was last used. Tap that spot once to show it, then tap it
 again to open the menu.
@@ -195,7 +128,7 @@ Technical note: in handheld mode the game scales the 3D scene by canvas width / 
 a 1600x900 canvas became 2000x1120 and ran out of texture memory), so `render_res_publish` divides that factor out on
 iOS.
 
-## 6. Mods (for example a translation)
+## 4. Mods (for example a translation)
 
 The iOS version on this branch reads RomFS mods from the app's **`Documents/mods`** folder, with the same rules as the
 Mac version ([mods.md](mods.md)): only files listed in `manifest.tsv` are used.
@@ -217,7 +150,7 @@ Version 1.4.3 uses the text file `Mals/USen.Product.142.sarc.zs` and the table
 table: update the entries of the replaced files in the original `.143` table (keeping the larger size) and name it
 `.143`; otherwise a file larger than the original can crash the game.
 
-## 7. Copying saves between devices
+## 5. Copying saves between devices
 
 Saves are in the app's `Documents/save`. Nothing syncs them: copy **one way**, from the device played last, and back up
 first. Automatic sync between iPhone, iPad and Mac through a folder in iCloud Drive: settings menu › Save sync, see
@@ -237,9 +170,10 @@ xcrun devicectl device copy to --device <target UDID> --domain-type appDataConta
 Copy `account.uid` and the whole `save/<id>/` folder (the `slot_*` folders, `option.sav`, `album`). With the same
 `account.uid` on both devices the game opens that save folder.
 
-## 8. Contributing shaders
+## 6. Contributing shaders
 
-When the game meets a shader the shared list lacks, it writes it to `Documents/shader-list-contribution.txt`. The Mac
-agent (`games/totk/ios/tools/shader_contrib_watch.py`, installed by the iOS build) checks connected devices (cable or
-same Wi‑Fi) every 10 minutes and, for every 500 new shaders, asks once in a dialog on the Mac whether to send them as a
-GitHub issue. To remove it: `python3 games/totk/ios/tools/shader_contrib_watch.py uninstall`.
+As upstream (README, [Let's maintain the shader list together](../README.md#lets-maintain-the-shader-list-together-no-more-stutter)):
+the iPhone/iPad notes the shaders and render pipelines the shared list lacks, and the Mac that built the app gathers
+them into `<clone>/shader-list-contribution/` and asks before sending. A build with `--no-shader-reminder` leaves that
+Mac agent out; `python3.14 games/totk/ios/tools/shader_contrib_watch.py install --store "$PWD/shader-list-contribution"`
+adds it later.
