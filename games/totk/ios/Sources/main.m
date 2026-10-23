@@ -39,12 +39,16 @@ void runtime_shortcut_help_toggle(void) {}
    - translation thread (testing; gfx/nvn/hle_nvn.c x_thread): TOTK_ASYNC_REPLAY at start. The comments there call it the
      iPhone default, but nothing set it on iOS: submits are replayed on the game's render thread, after the frame's game
      logic. On, the replay runs on its own thread while the game works on the next frame. Off by default (upstream's
-     default); not yet measured on the iPhone. */
+     default); not yet measured on the iPhone;
+   - screen refresh (testing; gfx/nvn/nvn_mtl.m link_cap_hz): TOTK_LINK_MATCH_CAP at start. Full keeps the display link
+     at the screen's rate; Match the frame limit asks for the cap's rate (30 / 40 / 60 on a 120 Hz screen) to save
+     battery, at the cost of late frames waiting a whole refresh at that rate. Off by default; not yet measured. */
 void nvn_set_fps_cap(int fps);
 void fps_overlay_set_hud_mode(int mode);   /* gfx/nvn/fps_overlay.h: HUD_MODE_OFF 0, ALL 1, MINIMAL 2, FPS 3 */
 enum { kHudOff = 0, kHudAll = 1, kHudSizes = 2, kHudFps = 3 };
 static NSString *const kFpsCapKey = @"TOTKFpsCap", *const kOutputHeightKey = @"TOTKOutputHeight", *const kRenderScaleKey = @"TOTKRenderScale",
-                *const kHudKey = @"TOTKHud", *const kGpuKeepAliveKey = @"TOTKGpuKeepAlive", *const kAsyncReplayKey = @"TOTKAsyncReplay";
+                *const kHudKey = @"TOTKHud", *const kGpuKeepAliveKey = @"TOTKGpuKeepAlive", *const kAsyncReplayKey = @"TOTKAsyncReplay",
+                *const kLinkMatchCapKey = @"TOTKLinkMatchCap";
 static int saved_setting(NSString *key, int fallback) {
     NSNumber *v = [NSUserDefaults.standardUserDefaults objectForKey:key];
     return v ? v.intValue : fallback;
@@ -56,6 +60,7 @@ static int saved_hud(void) { return saved_setting(kHudKey, kHudSizes); }
 static int default_gpu_keepalive(void) { return UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPhone; }
 static int saved_gpu_keepalive(void) { return saved_setting(kGpuKeepAliveKey, default_gpu_keepalive()); }
 static int saved_async_replay(void) { return saved_setting(kAsyncReplayKey, 0); }
+static int saved_link_match_cap(void) { return saved_setting(kLinkMatchCapKey, 0); }
 static int width_16_9(int h) { return (h * 16 + 8) / 9; }
 /* The scene size for an output height and a render scale, rounded to even pixels (67% is exactly 2/3: 1080p -> 720p). */
 static void render_size(int out_h, int pct, int *w, int *h) {
@@ -171,7 +176,8 @@ static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, i
     return m;
 }
 - (NSArray<UIMenuElement *> *)settingsMenu {
-    int fps = saved_fps_cap(), out = saved_output_height(), pct = saved_render_scale(), hud = saved_hud(), ka = saved_gpu_keepalive(), ar = saved_async_replay(), rw, rh;
+    int fps = saved_fps_cap(), out = saved_output_height(), pct = saved_render_scale(), hud = saved_hud(), ka = saved_gpu_keepalive(), ar = saved_async_replay(),
+        lm = saved_link_match_cap(), rw, rh;
     render_size(out, pct, &rw, &rh);
     NSMutableArray<NSString *> *scaleLabels = [NSMutableArray array];
     for (NSNumber *p in @[@50, @67, @75, @100]) { int w, h; render_size(out, p.intValue, &w, &h); [scaleLabels addObject:[NSString stringWithFormat:@"%@%% (%dx%d)", p, w, h]]; }
@@ -232,6 +238,14 @@ static UIMenu *choice_menu(NSString *title, NSString *subtitle, NSString *key, i
                         "limit; it does not cool the phone (the CPU does the same work) and it keeps extra copies of the commands, so it uses "
                         "more memory. Off is the upstream default and On is not yet measured on the iPhone: if the picture looks wrong or "
                         "the game crashes, turn it Off. Takes effect the next time the game starts."]; }),
+        choice_menu(@"Screen refresh (testing)", [NSString stringWithFormat:@"%@, next launch", lm ? @"Match the limit" : @"Full"], kLinkMatchCapKey, lm,
+                    @[@0, @1], @[@"Full (default)", @"Match the frame rate limit"], restart,
+                    ^{ [weakSelf explain:@"Screen refresh (testing)" text:@"With a frame rate limit, how often the screen refreshes. Full: as "
+                        "often as it can (120 times a second on a ProMotion screen), each game frame shown for several refreshes, so a frame "
+                        "that comes late appears at the next refresh, a few milliseconds later. Match the frame rate limit: the screen "
+                        "refreshes only as often as the limit (30, 40 or 60 times a second), which may save battery; a late frame then waits "
+                        "a whole refresh (33 ms at 30), so stutters show more. No effect with Unlimited or a limit the screen's rate is not a "
+                        "multiple of. Not measured yet. Takes effect the next time the game starts."]; }),
     ];
 }
 - (void)explain:(NSString *)title text:(NSString *)text {
@@ -483,6 +497,7 @@ static void audio_observe(void) {
     setenv("TOTK_FPS_CAP",[NSString stringWithFormat:@"%d",saved_fps_cap()].UTF8String,0);
     setenv("TOTK_GPU_KEEPALIVE",saved_gpu_keepalive()?"1":"0",0);
     setenv("TOTK_ASYNC_REPLAY",saved_async_replay()?"1":"0",0);
+    setenv("TOTK_LINK_MATCH_CAP",saved_link_match_cap()?"1":"0",0);
     { int out = saved_output_height(), rw, rh; render_size(out, saved_render_scale(), &rw, &rh);
       setenv("TOTK_OUTPUT_RES",[NSString stringWithFormat:@"%dx%d",width_16_9(out),out].UTF8String,0);
       setenv("TOTK_IOS_DRAWABLE_H",[NSString stringWithFormat:@"%d",out].UTF8String,0);

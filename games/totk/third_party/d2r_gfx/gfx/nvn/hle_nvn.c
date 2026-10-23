@@ -2371,6 +2371,9 @@ static int fps_cap(void) {
     if (v < 0) { const char *e = getenv("TOTK_FPS_CAP"); v = e && atoi(e) > 0 ? atoi(e) : 0; atomic_store(&g_fps_cap, v); }
     return v;
 }
+/* The cap that display-following pacing holds now; 0 without one, or while the uncapped clock, frame interpolation or the
+   game's own 30 fps paces instead. gfx/nvn/nvn_mtl.m link_cap_hz runs the display link at it (TOTK_LINK_MATCH_CAP). */
+int nvn_display_paced_cap(void) { int cap = fps_cap(); return cap > 0 && !uncapped_now() && mfx_enabled() == MFX_OFF && !game_holds_30() ? cap : 0; }
 static int uncapped_interval_on(void) {
     int v = atomic_load(&g_uncapped_interval);
     if (v < 0) { const char *e = getenv("TOTK_UNCAPPED_INTERVAL"); v = UNCAPPED_INTERVAL_FROM_ENV(e); atomic_store(&g_uncapped_interval, v); }

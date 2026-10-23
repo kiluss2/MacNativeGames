@@ -16,6 +16,8 @@ All numbers come from the game's own log, `Documents/log.txt` in the app contain
 | `[长帧]` | each frame over the budget: submit + present, GPU, new pipelines and shader libraries |
 | `游戏设出图间隔 a → b` | the game's own frame-rate controller changing the present interval (2 = 30 FPS, 3 = 20 FPS) |
 | `thermal state` | the iOS thermal state at start and on each change, with seconds since start |
+| `battery` | battery level, charging or not and Low Power Mode, at start and on each change, with seconds since start |
+| `display link for the frame-rate cap` | the display link's rate when Screen refresh (testing) matches the cap (0 = the display's rate) |
 
 ## 1. A 20-minute play session (keep-alive on, the default)
 
@@ -137,6 +139,16 @@ then an upload after the next save.
   thread after the frame's game logic. On, the replay runs on its own thread while the game works on the next frame.
   Aimed at the stutters where game logic and replay add up; it does not reduce heat and keeps extra command copies
   (more memory).
+- **Frame-rate cap on 120 Hz screens** (2026-10-23): since upstream 2338bb0 a 120 Hz iPhone/iPad runs on the uncapped
+  clock, where the game's present interval counts 120 Hz ticks, and the menu's cap multiplied it (iPhone 15 Pro: cap 30
+  gave 10–15 fps, cap 60 gave 20–30). A cap below the clock's ceiling now suspends it, and display-following pacing
+  holds whole display ticks as before (hle_nvn.c `uncapped_now`; the present-interval probe covers it).
+- **Battery in the log**: level, charging and Low Power Mode at start and on each change (Low Power Mode slows the CPU
+  without changing the thermal state).
+- **Screen refresh (testing)**, menu, default Full: Match the frame rate limit sets `TOTK_LINK_MATCH_CAP=1`, and the
+  display link asks for the cap's rate (30 / 40 / 60 on a 120 Hz screen) instead of the screen's, so a ProMotion screen
+  refreshes and wakes the game less often. A late frame then waits a whole refresh at that rate (66 ms at a cap of 30
+  instead of 42 ms at 120 Hz).
 
 Ruled out: the render thread's real-time budget. It is already adaptive (p90 of its CPU time × 1.25, at most 0.9 of the
 period), so it follows the measured time and is not under-declared.
@@ -155,6 +167,9 @@ minutes before each run. Copy `Documents/log.txt` after each run, before the gam
    20 FPS switches, GPU time in heavy scenes. Done: section 2b.
 2. **Translation thread On** (keep-alive as decided by step 1). Watch for wrong pictures or a crash. Against step 1:
    frames over budget split as in section 1, frame interval p99, footprint.
+3. **Screen refresh: Full, then Match the frame rate limit**, 30 FPS cap, unplugged, each run started at the same battery
+   level and after the phone has cooled. Against each other: battery drop per minute (`battery` lines), thermal state over
+   time, average clock, frames over budget and frame interval p95 / p99 (late frames cost more at 30 Hz).
 
 ## 5. Open items not covered here
 

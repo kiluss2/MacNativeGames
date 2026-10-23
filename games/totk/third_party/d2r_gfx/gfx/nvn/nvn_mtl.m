@@ -130,6 +130,7 @@ static pthread_cond_t g_pq_cv = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t g_link_cv = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t g_link_mu = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_link_tick_ns, g_link_tick_n;
+static _Atomic uint64_t g_link_dt_ns;   // the display link's refresh interval, from its callbacks (link_cap_hz, mtl_link_wait_tick)
 static uint64_t g_link_dropped;
 static int g_pq_inflight;   // 持 g_pq_mu：已提交给 GPU、完成回调还没来的上屏数 | Under g_pq_mu: number of presents committed to the GPU whose completion callback has not arrived yet
 int g_dm_present_link;   // 出图节拍模式（DM_PRESENT_LINK 的运行时值，同进程交替测量时直接改它）：0 = 自己取 drawable；1 = 显示节拍 60 Hz；2 = 120 Hz 节拍、游戏隔拍出一帧 | Present pacing mode (runtime value of DM_PRESENT_LINK, modified directly during same-process alternating measurement): 0 = acquire the drawable itself; 1 = display link at 60 Hz; 2 = display link at 120 Hz, the game presents a frame every other display-link tick
@@ -13495,6 +13496,9 @@ __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
         MLOG("显示节拍恢复：这段停了 %.0f ms（其中激活中 %.0f ms），兜底丢了 %llu 帧（第 %llu 段）", (t - g_stall_t0) / 1e6, (t - (g_stall_t0 > since ? g_stall_t0 : since)) / 1e6, (unsigned long long)g_stall_drop, (unsigned long long)g_stall_n); g_stall_t0 = 0; }
     pthread_mutex_unlock(&g_pq_mu);
     pthread_mutex_lock(&g_link_mu);
+    { /* The refresh interval: a shorter one at once, a longer one after three in a row (one missed refresh is not a new rate). */
+      static int longer; uint64_t t = now_ns(), d = g_link_tick_ns ? t - g_link_tick_ns : 0, old = atomic_load(&g_link_dt_ns);
+      if (d > 2000000ull && d < STALL_NS) { if (!old || d * 2 < old * 3 || ++longer >= 3) { atomic_store(&g_link_dt_ns, d); longer = 0; } } }
     g_link_tick_ns = now_ns();
     g_link_tick_n++;
     pthread_cond_broadcast(&g_link_cv);
@@ -13533,9 +13537,23 @@ __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
 static CAMetalDisplayLink *g_link; static CFRunLoopRef g_link_rl; static int g_link_started;
 static int g_link_owns_layer, g_classic_busy;   // 持 g_pq_mu：图层挂着节拍对象期间 nextDrawable 会抛异常，自取 drawable 的出图线程与节拍对象互斥 | Under g_pq_mu: nextDrawable throws while the layer has the display link object attached, so the present thread that takes its own drawable and the display link object are mutually exclusive
 static int link_on(void) { return g_dm_present_link && g_link != nil; }
+/* TOTK_LINK_MATCH_CAP=1 (the iOS settings menu's Screen refresh, testing): with a frame-rate cap that display-following
+   pacing holds (hle_nvn.c nvn_display_paced_cap) and that divides the display's rate, the display link asks for the cap's
+   rate, so a ProMotion screen refreshes 30, 40 or 60 times a second instead of 120 and the game is woken that often.
+   mtl_link_wait_tick then counts the frame's display ticks in refreshes at that rate. A late frame waits for the next
+   refresh at that rate (66 ms at 30 instead of 42 ms at 120). */
+int nvn_display_paced_cap(void);
+static int link_display_hz(void) { static int hz; if (!hz) hz = mtl_display_hz(); return hz; }
+static int link_cap_hz(void) {
+    static int on = -1; if (on < 0) { const char *e = getenv("TOTK_LINK_MATCH_CAP"); on = e && atoi(e) > 0; }
+    if (!on || g_dm_present_link != 1) return 0;
+    int cap = nvn_display_paced_cap(), hz = link_display_hz();
+    return cap >= 20 && hz > cap && hz % cap == 0 ? cap : 0;
+}
 static CAFrameRateRange link_range(int mode) {
     if (mode == 3) return CAFrameRateRangeMake(30, 30, 30);
     if (mode == 2) return CAFrameRateRangeMake(60, 120, 120);
+    { int lc = mode == 1 ? link_cap_hz() : 0; if (lc) return CAFrameRateRangeMake(lc, lc, lc); }
     const char *explicit_hz = getenv("DM_PRESENT_HZ"), *rt = getenv("TOTK_REALTIME");
     int hz = explicit_hz ? atoi(explicit_hz) : (rt && !strcmp(rt, "0")) ? 60 : mtl_display_hz();
     if (hz < 30 || hz > 120) hz = 60;
@@ -13560,14 +13578,15 @@ static void *link_main(void *arg) {   // 显示节拍线程：切到节拍模式
     return NULL;
 }
 static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象的状态对齐到 g_dm_present_link 与省电模式（运行中可改） | Called every frame by the game's present thread: aligns the display link object's state to g_dm_present_link and the power-saving mode (can change at run time)
-    static int applied;
+    static int applied, applied_cap;
     if (g_rescue_mode && now_ns() >= g_rescue_back_at) {   // rescue period over: back to the display link (stall timing starts afresh)
         pthread_mutex_lock(&g_pq_mu); g_dm_present_link = g_rescue_mode; g_rescue_mode = 0; g_stall_t0 = 0; g_link_tick_ns = now_ns(); pthread_mutex_unlock(&g_pq_mu);
         MLOG("显示节拍：抢救期满，换回节拍模式 %d 再试（帧 %llu）", g_dm_present_link, (unsigned long long)atomic_load(&g_cur_frame)); }
     int want = g_dm_present_link;
     if (want < 0 || want > 2) { g_dm_present_link = applied == 3 ? 1 : applied; return; }
     if (want && mtl_fps_target() == 30) want = 3;   // 省电模式：显示节拍 30 Hz | Power-saving mode: display link at 30 Hz
-    if (want == applied) return;
+    int cap_hz = want == 1 ? link_cap_hz() : 0;   // the frame-rate cap's rate (TOTK_LINK_MATCH_CAP), which the menu changes at run time
+    if (want == applied && cap_hz == applied_cap) return;
     g_link_mode = want;
     if (!g_link_started) {
         if (!want) { applied = 0; return; }
@@ -13578,8 +13597,9 @@ static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象
     CAMetalDisplayLink *link = g_link; if (!link) return;
     if (want) link.preferredFrameRateRange = link_range(want);
     else { CFRunLoopRef rl = g_link_rl; g_link = nil; CFRunLoopPerformBlock(rl, kCFRunLoopDefaultMode, ^{ [link invalidate]; pthread_mutex_lock(&g_pq_mu); g_link_owns_layer = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); CFRunLoopStop(rl); }); CFRunLoopWakeUp(rl); }
-    MLOG("出图节拍模式 %d → %d（帧 %llu）", applied, want, (unsigned long long)atomic_load(&g_cur_frame));
-    applied = want;
+    if (want != applied) MLOG("出图节拍模式 %d → %d（帧 %llu）", applied, want, (unsigned long long)atomic_load(&g_cur_frame));
+    if (cap_hz != applied_cap) MLOG("display link for the frame-rate cap (TOTK_LINK_MATCH_CAP): %d Hz (0 = the display's rate, frame %llu)", cap_hz, (unsigned long long)atomic_load(&g_cur_frame));
+    applied = want; applied_cap = cap_hz;
     pthread_mutex_lock(&g_pq_mu); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
 }
 // 进后台前（mtl_drain）：显示节拍驱动出图时，排着队还没上屏的帧只能由节拍回调取走，而后台里系统不再回调——
@@ -13814,7 +13834,12 @@ int mtl_link_wait_tick(uint64_t timeout_ns, unsigned frame_ticks) {
     if (g_link_tick_ns && now_ns() - __atomic_load_n(&g_link_tick_ns, __ATOMIC_RELAXED) > STALL_NS) return 0;
     /* TOTK: a frame occupies frame_ticks 60 Hz ticks (the game's present interval); the variable-frame-rate step
        advances game time by exactly that interval, so presenting faster would speed the game up. */
-    const uint64_t step = (uint64_t)(g_dm_present_link == 2 ? 2 : 1) * (frame_ticks ? frame_ticks : 1);   // 一帧占几拍：游戏出图间隔 × 每个 60 Hz 节拍对应的节拍数（120 Hz 节拍为 2） | Ticks per frame: the game's present interval times display-link ticks per 60 Hz tick (2 at 120 Hz)
+    uint64_t step = (uint64_t)(g_dm_present_link == 2 ? 2 : 1) * (frame_ticks ? frame_ticks : 1);   // 一帧占几拍：游戏出图间隔 × 每个 60 Hz 节拍对应的节拍数（120 Hz 节拍为 2） | Ticks per frame: the game's present interval times display-link ticks per 60 Hz tick (2 at 120 Hz)
+    /* TOTK_LINK_MATCH_CAP: frame_ticks counts display ticks at the display's rate; with the link at the cap's rate the frame
+       takes as many of its refreshes as cover that time (the cap 30: 4 ticks at 120 Hz, one refresh at 30 Hz). The measured
+       interval also covers the frames until the link has changed rate. */
+    { uint64_t dt = atomic_load(&g_link_dt_ns); int hz = link_display_hz();
+      if (link_cap_hz() && dt && hz > 0) { uint64_t frame_ns = (frame_ticks ? frame_ticks : 1) * 1000000000ull / (uint64_t)hz; step = (frame_ns + dt / 2) / dt; if (!step) step = 1; } }
     pthread_mutex_lock(&g_link_mu);
     if (g_link_tick_n >= started_tick + step) { started_tick = g_link_tick_n; pthread_mutex_unlock(&g_link_mu); return 1; }
     struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);

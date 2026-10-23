@@ -98,6 +98,7 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
 | Performance overlay | Off / FPS / **FPS + resolution** / FPS + resolution + CPU, GPU, RAM | at once |
 | GPU keep-alive (testing) | On / Off (**Off** on iPhone, **On** on iPad) | next launch |
 | Translation thread (testing) | **Off** / On | next launch |
+| Screen refresh (testing) | **Full** / Match the frame rate limit | next launch |
 
 - **Frame rate limit:** on a 120 Hz screen (iPad Pro, iPhone Pro) without a limit the game draws 120 frames a second
   and runs very hot. The game runs at the right speed at every limit.
@@ -119,8 +120,13 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
   thread of its own while the game logic of the next frame runs, instead of after it. Aimed at smoother frames when the
   CPU is the limit, not at heat, and it uses more memory. Off is the upstream default; On is not yet measured on the
   iPhone.
+- **Screen refresh (testing):** with a frame rate limit, Full keeps the screen at its own rate (120 Hz on ProMotion), so
+  a late frame shows at the next refresh a few milliseconds later. Match the frame rate limit (`TOTK_LINK_MATCH_CAP=1`)
+  refreshes only as often as the limit (30, 40 or 60 times a second), which may save battery; a late frame then waits a
+  whole refresh (33 ms at 30). No effect with Unlimited or a limit the screen's rate is not a multiple of. Not measured
+  yet. The log records the battery (`battery` lines: level, charging, Low Power Mode) for comparing the two.
 
-Measurements and the test plan for the two testing options: [ios-performance-notes.md](ios-performance-notes.md).
+Measurements and the test plan for the testing options: [ios-performance-notes.md](ios-performance-notes.md).
 
 Suggested: iPhone 720p / 100% / 60 FPS; iPad M4 1080p / 67% / 40–60 FPS, or 1080p / 100% / 30–40 FPS.
 

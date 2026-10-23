@@ -95,6 +95,14 @@ static void thermal_log(const char *why){
  static const char *const names[]={"nominal","fair","serious","critical"};int t=dm_thermal_now();
  fprintf(stderr,"[totk] thermal state %s: %s (%d) at %.1f s\n",why,t>=0&&t<4?names[t]:"?",t,(runtime_now_ns()-bootStartNS)/1e9);
 }
+/* The battery, logged the same way (main thread: UIDevice): the level in the steps iOS reports it, whether it charges, and
+   Low Power Mode, which slows the CPU without changing the thermal state. Two runs compare by the drop per minute. */
+static void battery_log(const char *why){
+ static const char *const states[]={"unknown","unplugged","charging","full"};UIDevice *d=UIDevice.currentDevice;
+ float lv=d.batteryLevel;long st=(long)d.batteryState;
+ fprintf(stderr,"[totk] battery %s: %.0f%%, %s, Low Power Mode %s at %.1f s\n",why,lv<0?-1.0:lv*100.0,st>=0&&st<4?states[st]:"?",
+         NSProcessInfo.processInfo.lowPowerModeEnabled?"on":"off",(runtime_now_ns()-bootStartNS)/1e9);
+}
 /* Called on the main thread by the app before the game thread starts. */
 void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  bootStartNS=runtime_now_ns();
@@ -129,6 +137,9 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n){(void)n;app_active_changed(1);}];
  thermal_log("at start");
  [nc addObserverForName:NSProcessInfoThermalStateDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *n){(void)n;thermal_log("changed");}];
+ UIDevice.currentDevice.batteryMonitoringEnabled=YES;battery_log("at start");
+ for(NSNotificationName name in @[UIDeviceBatteryLevelDidChangeNotification,UIDeviceBatteryStateDidChangeNotification,NSProcessInfoPowerStateDidChangeNotification])
+  [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){(void)n;battery_log("changed");}];
  vsyncTarget=[TOTKVsync new];displayLink=[CADisplayLink displayLinkWithTarget:vsyncTarget selector:@selector(tick:)];
  displayLink.preferredFrameRateRange=CAFrameRateRangeMake(60,60,60);[displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 }
