@@ -43,7 +43,6 @@ int fps_overlay_hud_mode(void) { return atomic_load_explicit(&g_hud_mode, memory
 void fps_overlay_set_hud_mode(int mode) {
     if (mode >= HUD_MODE_OFF && mode <= HUD_MODE_FPS) atomic_store_explicit(&g_hud_mode, mode, memory_order_relaxed);
 }
-__attribute__((weak)) int runtime_render_size_current(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
 int fps_overlay_hints_enabled(void) { return fps_overlay_hud_mode() != HUD_MODE_OFF; }
 int fps_overlay_full_hud(void) { return fps_overlay_hud_mode() == HUD_MODE_ALL; }
 int fps_overlay_toggle_hints(void) {
@@ -157,18 +156,19 @@ void fps_overlay_raster_line(const char *text, int highlight, int scale, uint8_t
 }
 
 void fps_overlay_text(const fps_overlay_info *info, char *text, size_t n) {
-    char fps[8], ss[12];
+    char fps[8], ss[12];   // ss: the output resolution, then the internal one in brackets
     if (info->fps < 0) snprintf(fps, sizeof fps, "--");
     else snprintf(fps, sizeof fps, "%d", info->fps > 999 ? 999 : info->fps);
     size_text(ss, sizeof ss, info->screen_w, info->screen_h);
+    char sc[16] = "";
+    if (info->scene_w > 0 && info->scene_h > 0) snprintf(sc, sizeof sc, " (%dx%d)", info->scene_w > 9999 ? 9999 : info->scene_w, info->scene_h > 9999 ? 9999 : info->scene_h);
     char gen[8] = "";
     if (info->gen > 0 && info->fps >= 0) snprintf(gen, sizeof gen, "+%d", info->gen > 999 ? 999 : info->gen);   // interpolated frames a second (key 2)
     // MetalFX did the upscale in the last frames (key 3 selects the manual MetalFX mode); 2K: true 2K output.
     // The whole line in the system font, so switching MetalFX does not switch the font.
     if (info->hud_mode == HUD_MODE_FPS) { snprintf(text, n, "FPS %s%s", fps, gen); return; }
-    char rs[24] = "";   // the render size only where it differs from the picture's
-    if (info->render_w > 0 && info->render_h > 0 && (info->render_w != info->screen_w || info->render_h != info->screen_h)) { char r[12]; size_text(r, sizeof r, info->render_w, info->render_h); snprintf(rs, sizeof rs, "  render %s", r); }
-    snprintf(text, n, "FPS %s%s  %s%s%s%s", fps, gen, ss, rs, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", info->big ? "  2K" : "");
+    if (info->scene_w == info->screen_w && info->scene_h == info->screen_h) sc[0] = 0;   // the same size twice says nothing
+    snprintf(text, n, "FPS %s%s  %s%s%s%s", fps, gen, ss, sc, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", info->big ? "  2K" : "");
 }
 
 void fps_overlay_raster(const fps_overlay_info *info, int scale, uint8_t *out, int *box_w, int *box_h) {
@@ -219,7 +219,13 @@ void shader_overlay_text(char *out, size_t n, uint64_t fresh, int64_t total, uin
     char t[16];
     (void)pipelines;   // user 2026-10-17: the pipeline count is not shown
     if (total < 0) snprintf(t, sizeof t, "--"); else snprintf(t, sizeof t, "%lld", (long long)(total > 999999 ? 999999 : total));
+#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
+    // The phone translates nothing: "fresh" is the shaders it was missing this run (their draws are skipped until the
+    // Mac fills them, ios/tools/fill_shaders.py).
+    snprintf(out, n, TOTK_UI("缺着色器 %llu / 总计 %s", "Missing shaders %llu / total %s"), (unsigned long long)(fresh > 99999 ? 99999 : fresh), t);
+#else
     snprintf(out, n, TOTK_UI("新着色器 %llu / 总计 %s", "New shaders %llu / total %s"), (unsigned long long)(fresh > 99999 ? 99999 : fresh), t);
+#endif
 }
 /* The render pipeline line under the shaders (user 2026-10-22: "fps和着色器下面 现在显示渲染管线 信息，新/总计"): pipelines
    this run built that this profile had never built (new to its warm list), and every render pipeline ready this run

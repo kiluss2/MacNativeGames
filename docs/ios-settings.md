@@ -94,7 +94,7 @@ Each item has an **ⓘ About this setting** entry with an in-game explanation. C
 | Save sync | **Off** / a folder in iCloud Drive ([ios-save-sync.md](ios-save-sync.md)) | next launch |
 | Frame rate limit | 30 / 40 / **60** / Unlimited | at once |
 | Resolution | **720p** (Switch handheld) / 900p / 1080p (Switch docked) | next launch |
-| Render scale | 50% / 67% / 75% / **100%** (with the actual size) | next launch |
+| Render scale | 50% / 67% / **75%** / 100% (with the actual size; 75% at 720p is upstream's 960x540, upscaled by MetalFX) | next launch |
 | Performance overlay | Off / FPS / **FPS + resolution** / FPS + resolution + CPU, GPU, RAM | at once |
 | GPU keep-alive (testing) | On / Off (**Off** on iPhone, **On** on iPad) | next launch |
 | Translation thread (testing) | **Off** / On | next launch |

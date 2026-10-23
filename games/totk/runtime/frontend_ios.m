@@ -66,6 +66,9 @@ void runtime_warm_progress(uint64_t done,uint64_t total,uint64_t shaders,uint64_
  });
 }
 void runtime_warm_done(void){}
+/* The "温控" of the present lines (hle_nvn.c): the system's thermal state, 0 nominal, 1 fair, 2 serious, 3 critical; the default
+   (-1) was never replaced on iOS, so a phone slowing down as it warmed could not be told from other causes (2026-10-23). */
+int dm_thermal_now(void){return (int)NSProcessInfo.processInfo.thermalState;}
 uint64_t front_game_res(int docked){(void)docked;return (720ULL<<32)|1280;}
 static _Atomic int appActive=1;
 int runtime_front_focus(void){return atomic_load(&appActive);}
@@ -87,10 +90,8 @@ void runtime_front_text_test(const char *op,const char *text){(void)text;fprintf
 @end
 static TOTKVsync *vsyncTarget;
 
-/* Thermal state for the graphics log ("温控" in the present summary, gfx/nvn/hle_nvn.c, whose weak default -1 stays on
-   the Mac): 0 nominal, 1 fair, 2 serious, 3 critical. With the CPU clock in the same log it tells a hot phone from a
-   thread iOS moved to the efficiency cores. Each change is logged too, with the seconds since the view was attached. */
-int dm_thermal_now(void){return (int)NSProcessInfo.processInfo.thermalState;}
+/* Each change of the thermal state (dm_thermal_now above) is logged too, with the seconds since the view was attached:
+   with the CPU clock in the same log it tells a hot phone from a thread iOS moved to the efficiency cores. */
 static void thermal_log(const char *why){
  static const char *const names[]={"nominal","fair","serious","critical"};int t=dm_thermal_now();
  fprintf(stderr,"[totk] thermal state %s: %s (%d) at %.1f s\n",why,t>=0&&t<4?names[t]:"?",t,(runtime_now_ns()-bootStartNS)/1e9);
@@ -122,7 +123,7 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
   else if(want<vh){vw=round(vw*want/vh);vh=(double)want;}
  }
  metalLayer.drawableSize=CGSizeMake(vw,vh);
- fprintf(stderr,"[totk] view drawable %.0fx%.0f (screen scale %.1f, TOTK_IOS_DRAWABLE_H=%ld)\n",vw,vh,s,want);
+ fprintf(stderr,"[totk] view drawable %.0fx%.0f (screen scale %.1f, TOTK_IOS_DRAWABLE_H=%ld)\n",vw,vh,s,want);runtime_aspect_view(vw,vh);   /* full screen: the camera takes the drawable's shape (aspect_patch.h) */
  bootOverlay=[[UIView alloc] initWithFrame:host.bounds];bootOverlay.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
  bootOverlay.backgroundColor=[UIColor colorWithRed:0.035 green:0.075 blue:0.09 alpha:1];
  CGFloat w=host.bounds.size.width,h=host.bounds.size.height;
