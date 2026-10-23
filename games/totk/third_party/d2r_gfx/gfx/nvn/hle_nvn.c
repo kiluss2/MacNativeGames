@@ -2341,7 +2341,11 @@ static int g_paced_hz;   // the display-following rate, used instead of the unca
    mode, without the interpolation. Weak: Tears of the Kingdom has none. */
 __attribute__((weak)) int runtime_game_fps_limit(void) { return 0; }
 static int game_holds_30(void) { return runtime_game_fps_limit() == 30; }
-static int uncapped_now(void) { int m = mfx_enabled(); return g_uncapped && !game_holds_30() && (m == MFX_OFF || m == MFX_MAX); }
+static int fps_cap(void);
+static int g_hz;   // defined with present_cfg below (-1 until configured): the pacing rate, the uncapped clock's ceiling when g_uncapped
+/* A player's frame-rate cap below the uncapped clock's ceiling (g_hz) suspends it too: display-following pacing holds
+   whole display ticks (present_ticks), so frames stay even and in step with the display. */
+static int uncapped_now(void) { int m = mfx_enabled(), cap = fps_cap(); return g_uncapped && !game_holds_30() && (m == MFX_OFF || m == MFX_MAX) && !(cap > 0 && cap < g_hz); }
 /* 30+30 on a display whose rate is not a multiple of 30 (the user's 100 Hz): the game is paced by our own clock at exactly
    30 fps instead of by the display link (3 refreshes would be 33 fps); the display link still shows each picture at a refresh. */
 static int mfx_own_clock(void) { return (mfx_enabled() == MFX_30 || game_holds_30()) && (g_paced_hz <= 0 || g_paced_hz % 30); }
@@ -2354,8 +2358,9 @@ void nvn_set_uncapped_interval(int on) {
     LOG("[flag] uncapped_interval = %d", on != 0);
 }
 /* Player frame-rate cap (iOS settings menu, or TOTK_FPS_CAP at start; 0 = none). Display-following pacing holds each frame
-   for enough display ticks to stay at or under it (60 = every second tick at 120 Hz); the uncapped clock runs at it. The
-   real-time frame step keeps game speed right, as for frame interpolation at half the refresh rate. */
+   for enough display ticks to stay at or under it (60 = every second tick at 120 Hz); a cap below the uncapped clock's
+   ceiling suspends that clock (uncapped_now), as frame interpolation does. The real-time frame step keeps game speed
+   right, as for frame interpolation at half the refresh rate. */
 static _Atomic int g_fps_cap = -1;
 void nvn_set_fps_cap(int fps) {
     atomic_store(&g_fps_cap, fps > 0 ? fps : 0);
@@ -2754,15 +2759,15 @@ static uint64_t present_period(const win_t *o) {
                                     m == MFX_MAX ? (g_uncapped ? "补帧 不限帧：不限帧率，每帧补一帧" : "补帧 不限帧：按游戏的出图间隔，每帧补一帧") :
                                     g_uncapped ? "补帧关：不限帧率" : "补帧关：按游戏的出图间隔"); was = m; }
     if (m == MFX_30 || game_holds_30()) return 1000000000ull / 30;   /* exactly 30 fps, by display ticks or by our own clock */
-    { int cap = fps_cap(); if (cap > 0 && uncapped_now() && hz > cap) hz = cap; }
     return hz > 0 ? (uint64_t)itv * 1000000000ull / (uint64_t)hz : 0;
 }
 /* Exercise production policy, including the shrine's interval=2 and the
    legacy 30 FPS path. No sleep, present or GPU allocation is involved. */
 void dm_nvn_probe_present_interval(void) {
     int saved_hz = g_hz, saved_display = g_display_mode, saved_uncapped = g_uncapped;
-    int saved_flag = atomic_load(&g_uncapped_interval), checked = 0;
+    int saved_flag = atomic_load(&g_uncapped_interval), saved_cap = atomic_load(&g_fps_cap), checked = 0;
     const char *neg = getenv("TOTK_PROBE_NEGATIVE");
+    atomic_store(&g_fps_cap, 0);
     for (int hz = 60; hz <= 120; hz += 60) for (int uncapped = 0; uncapped < 2; uncapped++)
     for (int display = 0; display < 2; display++) for (int on = 0; on < 2; on++)
     for (int interval = -1; interval <= 3; interval++) {
@@ -2773,6 +2778,20 @@ void dm_nvn_probe_present_interval(void) {
             die("present interval probe: effective pacing differs from expected");
         checked++;
     }
+    /* The player's frame-rate cap with the uncapped clock configured on a 120 Hz display (iPhone / iPad ProMotion): a cap
+       below the ceiling paces whole display ticks, the game's interval or enough for the cap (30: 4, 40: 3, 60: 2), never
+       cap / interval (2026-10-23: the cap 30 with the game's interval 3 made 10 fps); a cap at the ceiling keeps the clock. */
+    { int saved_paced_cap = g_paced_hz;
+      for (int c = 0; c < 4; c++) for (int interval = 1; interval <= 3; interval++) {
+        const int caps[] = {30, 40, 60, 120}; win_t w = {.interval = interval};
+        g_hz = 120; g_paced_hz = 120; g_display_mode = 0; g_uncapped = 1; atomic_store(&g_uncapped_interval, 0); atomic_store(&g_fps_cap, caps[c]);
+        unsigned need = (unsigned)((120 + caps[c] - 1) / caps[c]), expected = (unsigned)interval > need ? (unsigned)interval : need;
+        if (present_ticks(&w) != expected || present_period(&w) != (uint64_t)expected * 1000000000ull / 120 || uncapped_now() != (caps[c] >= 120))
+            die("present interval probe: a frame-rate cap below the uncapped ceiling must pace whole display ticks");
+        checked++;
+      }
+      g_paced_hz = saved_paced_cap; }
+    atomic_store(&g_fps_cap, saved_cap);
     /* Frame interpolation modes (key 2 / flag mfx_interp, taken over at the frame boundary). Half the refresh rate: two
        display ticks per game frame at the display rate, also when the uncapped mode is configured (suspended). 30+30:
        exactly 1/30 s, by display ticks where the rate is a multiple of 30 and by our own clock otherwise (100 Hz).
